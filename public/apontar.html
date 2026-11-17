@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Apontar Horas</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Apontar horas <span class="muted">→ Clockwork</span></div>
+    <nav class="pages" aria-label="Páginas">
+      <a href="index.html">API Tester</a>
+      <a href="apoio.html">Tarefas de apoio</a>
+      <a href="apontar.html" aria-current="page">Apontar horas</a>
+    </nav>
+    <div class="conn">
+      <span id="baseUrl" class="mono"></span>
+      <span id="user" class="muted"></span>
+      <span id="tokenBadge" class="badge">…</span>
+    </div>
+  </header>
+
+  <div id="tokenBanner" class="banner" hidden>
+    <strong>Token não configurado.</strong>
+    Preencha <code>JIRA_EMAIL</code> e <code>JIRA_API_TOKEN</code> no <code>.env</code> e reinicie com <code>npm start</code>.
+  </div>
+
+  <main class="page stack">
+    <section class="panel" id="kpiPanel">
+      <div class="actions"><h1>Indicadores</h1><span id="kpiPeriod" class="muted"></span></div>
+      <div id="kpis" class="kpis"><p class="muted">Carregando…</p></div>
+      <p class="help">Do período exibido no calendário. Dias úteis = segunda a sexta sem feriado (nacional ou do <code>feriados.json</code>). Previstas = dias úteis × limite por dia. Executadas inclui batidas em fim de semana e feriado.</p>
+    </section>
+
+    <section class="panel" id="calPanel">
+      <div class="actions">
+        <h1>Meus apontamentos</h1>
+        <button id="calPrev" aria-label="Anterior">◀</button>
+        <button id="calToday">Hoje</button>
+        <button id="calNext" aria-label="Próximo">▶</button>
+        <strong id="calLabel"></strong>
+        <span class="spacer"></span>
+        <div class="seg" role="group" aria-label="Visão">
+          <button data-view="day">Dia</button><button data-view="week">Semana</button><button data-view="month" class="active">Mês</button><button data-view="closing">Fechamento</button>
+        </div>
+        <button id="calUse">Usar período exibido</button>
+      </div>
+      <div class="actions">
+        <label class="inline"><input type="checkbox" id="calWeekends"> Mostrar sábados e domingos</label>
+        <label class="inline"><input type="checkbox" id="calHolidays"> Mostrar feriados</label>
+        <span id="calClosingOpts" class="inline" hidden>
+          <label class="inline">Fechamento: dia inicial (mês anterior) <input type="number" id="calCloseStart" class="short" min="1" max="31" step="1"></label>
+          <label class="inline">dia final <input type="number" id="calCloseEnd" class="short" min="1" max="31" step="1"></label>
+        </span>
+      </div>
+      <p class="help">Seus apontamentos no Jira (os mesmos do My Work Overview do Clockwork). Clique num dia para ver e ajustar as batidas; Shift+clique estende o período do apontamento até o dia clicado. Cores do dia em relação ao limite diário: <span class="legend ok">na meta</span> <span class="legend under">abaixo</span> <span class="legend over">acima</span>.</p>
+      <div id="calError" class="error" hidden></div>
+      <div id="calBody"></div>
+    </section>
+
+    <section class="panel">
+      <h1>1. Horas por tarefa</h1>
+      <p class="help">Marque as tarefas e informe as horas (ex.: <code>1h 30m</code>, <code>1,5</code>, <code>90m</code>). Em “Dividir total”, informe o total do épico e o percentual de Análise.</p>
+      <div id="epics"><p class="muted">Carregando…</p></div>
+      <div class="epic-block" id="looseBlock">
+        <div class="ep-row"><strong>Outras tarefas</strong><span class="muted">qualquer tarefa do Jira (exceto épicos); ★ guarda nos favoritos</span></div>
+        <div class="actions">
+          <input id="looseKey" class="short" placeholder="ex.: SIJUD-123" aria-label="Chave da tarefa">
+          <button id="looseAdd">Adicionar</button>
+          <span id="looseMsg" class="muted"></span>
+        </div>
+        <div id="looseList"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h1>2. Período e expediente</h1>
+      <div class="grid-fields">
+        <label>De<input type="date" id="from"></label>
+        <label>Até<input type="date" id="to"></label>
+        <label>Início<input type="time" id="start" step="900"></label>
+        <label>Almoço de<input type="time" id="lunchStart" step="900"></label>
+        <label>Almoço até<input type="time" id="lunchEnd" step="900"></label>
+        <label>Fim<input type="time" id="end" step="900"></label>
+        <label>Limite por dia<input id="dailyLimit" placeholder="8h"></label>
+      </div>
+      <div class="actions">
+        <span class="muted">Dias úteis de segunda a sexta. O que você já apontou no Jira no período é respeitado.</span>
+        <span class="spacer"></span>
+        <button id="btnPreview" class="primary">Gerar prévia</button>
+      </div>
+    </section>
+
+    <section class="panel" id="autoPanel">
+      <h1>Apontamentos automáticos</h1>
+      <p class="help">Todo dia útil (sem fins de semana e feriados), no horário da regra, o app grava o apontamento sozinho — só enquanto estiver rodando. Dias perdidos (até 31 dias, nunca antes da data de início) são gravados quando ele voltar. Não duplica, não grava sobre outro apontamento seu e não muda status.</p>
+      <p id="autoBanner" class="bad" hidden></p>
+      <div class="grid-fields">
+        <label>Tarefa<input id="autoKey" placeholder="ex.: SIJUD-27633"></label>
+        <label>Início<input type="time" id="autoStart"></label>
+        <label>Duração<input id="autoMinutes" placeholder="15m"></label>
+        <label title="Primeiro dia em que a regra vale; pode ser no passado (recupera até 31 dias) ou no futuro">Data de início<input type="date" id="autoSince"></label>
+        <label title="Último dia em que a regra vale. Vazio: sem fim">Data de fim<input type="date" id="autoUntil"></label>
+        <label class="span2">Comentário<input id="autoComment" placeholder="Participação na reunião diária." maxlength="500"></label>
+      </div>
+      <div class="actions">
+        <button id="autoSave" class="primary">Adicionar regra</button>
+        <button id="autoCancel" hidden>Cancelar edição</button>
+        <span id="autoMsg" class="muted"></span>
+        <span class="spacer"></span>
+        <label class="inline"><input type="checkbox" id="autoPaused"> Pausar todas</label>
+        <button id="autoRun" title="Executa agora o que estiver pendente">Rodar agora</button>
+      </div>
+      <div class="scroll-x">
+        <table class="small">
+          <thead><tr><th>Tarefa</th><th>Horário</th><th>Comentário</th><th>Vigência</th><th>Situação</th><th>Última execução</th><th>Próxima</th><th></th></tr></thead>
+          <tbody id="autoRules"></tbody>
+        </table>
+      </div>
+      <details>
+        <summary>Histórico</summary>
+        <div class="scroll-x">
+          <table class="small">
+            <thead><tr><th>Quando</th><th>Tarefa</th><th>Dia</th><th>Resultado</th><th>Detalhe</th></tr></thead>
+            <tbody id="autoHistory"></tbody>
+          </table>
+        </div>
+      </details>
+    </section>
+
+    <div id="errorBox" class="error" hidden></div>
+
+    <section class="panel" id="previewPanel" hidden>
+      <div class="actions">
+        <h1>3. Prévia dos apontamentos</h1>
+        <span class="spacer"></span>
+        <button id="btnAi" hidden>Gerar comentários com IA</button>
+        <button id="btnSubmit" class="primary">Confirmar apontamentos</button>
+      </div>
+      <div id="summary" class="help"></div>
+      <div id="unallocated" class="banner" hidden></div>
+      <div id="transitions" class="help"></div>
+      <div class="grid-wrap">
+        <table class="items">
+          <thead><tr><th>Tarefa</th><th>Data</th><th>Início</th><th>Duração</th><th>Comentário</th><th></th><th>Resultado</th></tr></thead>
+          <tbody id="previewRows"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="dayPanel" class="day-panel">
+    <div class="actions">
+      <h2 class="dp-title"></h2>
+      <span class="spacer"></span>
+      <span class="dp-total"></span>
+    </div>
+    <div class="dp-error error" hidden></div>
+    <div class="dp-info help" hidden></div>
+    <div class="dp-body"></div>
+    <div class="actions">
+      <button class="dp-period">Usar este dia como período</button>
+      <span class="spacer"></span>
+      <button class="dp-close">Fechar</button>
+      <button class="dp-save primary">Salvar alterações</button>
+    </div>
+  </dialog>
+
+  <script type="module" src="apontar.js"></script>
+</body>
+</html>

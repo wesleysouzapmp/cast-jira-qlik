@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "jira-api-tester",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["src/index.js"],
+      "port": 3100
+    },
+    {
+      "name": "apoio-mock",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["scripts/mock-support.js"],
+      "port": 3101
+    }
+  ]
+}

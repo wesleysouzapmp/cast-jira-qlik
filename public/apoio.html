@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tarefas de Apoio</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Tarefas de apoio <span class="muted">→ QSENSE</span></div>
+    <nav class="pages" aria-label="Páginas">
+      <a href="index.html">API Tester</a>
+      <a href="apoio.html" aria-current="page">Tarefas de apoio</a>
+      <a href="apontar.html">Apontar horas</a>
+    </nav>
+    <div class="conn">
+      <span id="baseUrl" class="mono"></span>
+      <span id="user" class="muted"></span>
+      <span id="tokenBadge" class="badge">…</span>
+    </div>
+  </header>
+
+  <div id="tokenBanner" class="banner" hidden>
+    <strong>Token não configurado.</strong>
+    Preencha <code>JIRA_EMAIL</code> e <code>JIRA_API_TOKEN</code> no <code>.env</code> e reinicie com <code>npm start</code>.
+  </div>
+
+  <main class="page">
+    <section class="panel">
+      <div class="actions">
+        <h1>Itens atribuídos a você (todos os status)</h1>
+        <span id="count" class="muted"></span>
+        <span class="spacer"></span>
+        <label class="inline"><input type="checkbox" id="onlyEpics" checked> Só épicos</label>
+        <button id="btnToggleAll">Recolher tudo</button>
+        <button id="btnRefresh">Atualizar</button>
+        <button id="btnCreate" class="primary" disabled>Criar tarefas de apoio (0)</button>
+      </div>
+      <p class="help">Cada épico marcado recebe duas tarefas no QSENSE: <em>Analise da demanda</em> (CAT-105) e <em>Implementação da demanda</em> (CAT-166). Você confere a prévia antes de criar.</p>
+      <div id="truncatedNote" class="banner" hidden>Mostrando os primeiros 1000 itens atribuídos.</div>
+      <div id="errorBox" class="error" hidden></div>
+      <div class="grid-wrap">
+        <table class="items">
+          <thead>
+            <tr><th><input type="checkbox" id="selectAll" aria-label="Selecionar todos"></th><th>Chave</th><th>Tipo</th><th>Status</th><th>Resumo</th><th>Resultado</th></tr>
+          </thead>
+          <tbody id="items"><tr><td colspan="6" class="muted">Carregando…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="previewDialog">
+    <h2>Confirmar criação no QSENSE</h2>
+    <div id="previewBody"></div>
+    <div class="actions">
+      <span class="spacer"></span>
+      <button id="btnCancel">Cancelar</button>
+      <button id="btnConfirm" class="primary">Confirmar e criar</button>
+    </div>
+  </dialog>
+
+  <script type="module" src="apoio.js"></script>
+</body>
+</html>

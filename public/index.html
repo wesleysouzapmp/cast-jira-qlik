@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jira API Tester</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Jira API Tester <span class="muted">→ Qlik Sense</span></div>
+    <nav class="pages" aria-label="Páginas">
+      <a href="index.html" aria-current="page">API Tester</a>
+      <a href="apoio.html">Tarefas de apoio</a>
+      <a href="apontar.html">Apontar horas</a>
+    </nav>
+    <div class="conn">
+      <span id="baseUrl" class="mono"></span>
+      <span id="user" class="muted"></span>
+      <span id="tokenBadge" class="badge">…</span>
+    </div>
+  </header>
+
+  <div id="tokenBanner" class="banner" hidden>
+    <strong>Token não configurado.</strong>
+    Crie um API token em
+    <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener">id.atlassian.com → Segurança → API tokens</a>,
+    copie <code>.env.example</code> para <code>.env</code>, preencha <code>JIRA_EMAIL</code> e <code>JIRA_API_TOKEN</code> e reinicie com <code>npm start</code>.
+  </div>
+
+  <div class="layout">
+    <nav id="catalog" class="sidebar" aria-label="Endpoints"></nav>
+
+    <main class="main">
+      <section class="panel" id="form">
+        <div class="ep-head">
+          <h1 id="epTitle">Selecione um endpoint</h1>
+          <code id="epPath" class="mono"></code>
+        </div>
+        <p id="epHelp" class="help"></p>
+
+        <div id="customFields" class="grid2" hidden>
+          <label>Caminho (GET)<input id="customPath" class="mono" placeholder="/rest/api/3/issue/ABC-1"></label>
+          <label>Paginação
+            <select id="customPagination">
+              <option value="none">none (uma chamada)</option>
+              <option value="offset">offset (startAt)</option>
+              <option value="token">token (nextPageToken)</option>
+              <option value="worklogUpdated">worklogUpdated (nextPage)</option>
+            </select>
+          </label>
+          <label>Chave do array (dataKey)<input id="customDataKey" class="mono" placeholder="ex.: issues, values (vazio = raiz)"></label>
+        </div>
+
+        <div id="pathParams" class="grid2"></div>
+
+        <fieldset>
+          <legend>Parâmetros de query</legend>
+          <div id="queryRows"></div>
+          <button type="button" id="addQuery" class="link">+ adicionar parâmetro</button>
+        </fieldset>
+
+        <label id="bodyWrap" hidden>Body (JSON)
+          <textarea id="body" class="mono" rows="6" spellcheck="false"></textarea>
+        </label>
+
+        <div class="actions">
+          <label class="inline">Máx. páginas <input id="maxPages" type="number" min="1" max="1000" value="20"></label>
+          <label class="inline">Conexão Qlik <input id="connName" value="Jira_REST"></label>
+          <span class="spacer"></span>
+          <button id="btnCall" disabled>Chamar</button>
+          <button id="btnPaginate" class="primary" disabled>Paginar tudo</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div id="status" class="status muted">Nenhuma chamada ainda.</div>
+        <div id="errorBox" class="error" hidden></div>
+
+        <div class="tabs" role="tablist">
+          <button role="tab" data-tab="json" class="active">JSON</button>
+          <button role="tab" data-tab="table">Tabela</button>
+          <button role="tab" data-tab="pages">Paginação</button>
+          <button role="tab" data-tab="qlik">Script Qlik</button>
+        </div>
+
+        <div class="tab" data-tab="json"><pre id="json" class="mono code"></pre></div>
+
+        <div class="tab" data-tab="table" hidden>
+          <div class="table-tools">
+            <label class="inline">Tabela <select id="tableSelect"></select></label>
+            <span id="tableInfo" class="muted"></span>
+            <span class="spacer"></span>
+            <button id="btnCsv" disabled>Exportar CSV</button>
+          </div>
+          <div class="grid-wrap"><table id="grid"></table></div>
+        </div>
+
+        <div class="tab" data-tab="pages" hidden>
+          <div id="pagesSummary"></div>
+          <table id="pagesTable" class="small"></table>
+        </div>
+
+        <div class="tab" data-tab="qlik" hidden>
+          <div class="table-tools">
+            <span class="muted">Gerado a partir da última chamada. É um ponto de partida para o editor de carga.</span>
+            <span class="spacer"></span>
+            <button id="btnCopy">Copiar</button>
+          </div>
+          <pre id="qlik" class="mono code"></pre>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
