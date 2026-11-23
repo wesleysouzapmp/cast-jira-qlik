@@ -102,6 +102,18 @@ export function createWorklogService({ client, baseUrl, supportService, ai, rng 
     });
   }
 
+  // Tarefa pelo título exato (sem diferenciar maiúsculas/espaços), exceto épicos. Usado pelos agendamentos.
+  async function findBySummary(text) {
+    const norm = (s) => String(s ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+    const phrase = String(text).replace(/["\\]/g, ' ').trim();
+    const issues = await search(`summary ~ "\\"${phrase}\\"" ORDER BY created DESC`, ['summary', 'status', 'issuetype'], 'Busca da tarefa pelo texto');
+    const exact = issues.filter((i) => norm(i.fields?.summary) === norm(text) && !isEpicIssue(i));
+    if (!exact.length) return { available: false, error: `Nenhuma tarefa com o texto "${text}".` };
+    if (exact.length > 1) return { available: false, error: `Mais de uma tarefa com o texto "${text}": ${exact.map((i) => i.key).sort().join(', ')}.` };
+    const [i] = exact;
+    return { key: i.key, summary: i.fields?.summary ?? '', status: i.fields?.status?.name ?? '', url: browse(i.key), available: true };
+  }
+
   // Só tarefas de apoio (usado no destino ao mudar a tarefa de uma batida).
   function requireInScope(scope, keys) {
     const missing = [...new Set(keys)].filter((k) => !scope.tasks.has(k));
@@ -427,5 +439,5 @@ export function createWorklogService({ client, baseUrl, supportService, ai, rng 
     return run;
   }
 
-  return { aiEnabled: Boolean(ai?.enabled), listTasks, describe, myWorklogs, busy, preview, aiComments, submit, batch, autoLog };
+  return { aiEnabled: Boolean(ai?.enabled), listTasks, describe, myWorklogs, busy, preview, aiComments, submit, batch, autoLog, findBySummary };
 }

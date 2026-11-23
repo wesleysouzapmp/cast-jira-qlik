@@ -22,6 +22,9 @@ export function createFakeJira({ issues = [], worklogs = {}, transitionsTo = { '
         else if (jql.startsWith('project = QSENSE')) {
           const keys = jql.match(/parent in \(([^)]*)\)/)[1].split(',').map((s) => s.trim());
           list = [...byKey.values()].filter((i) => keys.includes(i.fields.parent?.key));
+        } else if (jql.startsWith('summary ~')) {
+          const phrase = jql.match(/^summary ~ "\\"(.*)\\""/)[1].toLowerCase();
+          list = [...byKey.values()].filter((i) => (i.fields.summary ?? '').toLowerCase().includes(phrase));
         } else if (jql.startsWith('worklogAuthor')) {
           const [, from, to] = jql.match(/worklogDate >= "([^"]+)" AND worklogDate <= "([^"]+)"/);
           // indexLag: worklogs criados via POST ainda não aparecem na busca; searchTz 'UTC': worklogDate avaliado em UTC.

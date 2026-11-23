@@ -58,3 +58,20 @@ test('autoLog: chave indisponível vira erro sem gravar', async () => {
   assert.match(r.message, /épico/);
   assert.equal(posts(jira).length, 0);
 });
+
+test('findBySummary acha a tarefa pelo título exato (sem diferenciar maiúsculas) e recusa ambíguo/épico/inexistente', async () => {
+  const jira = createFakeJira({ issues: [
+    { ...loose('SIJUD-27633'), fields: { ...loose('SIJUD-27633').fields, summary: 'Daily COSARQ - BI - 11/2026' } },
+    { ...loose('SIJUD-27634'), fields: { ...loose('SIJUD-27634').fields, summary: 'Daily COSARQ - BI - 11/2026 (cópia)' } },
+    { ...loose('SIJUD-5'), fields: { ...loose('SIJUD-5').fields, summary: 'Dup' } },
+    { ...loose('SIJUD-6'), fields: { ...loose('SIJUD-6').fields, summary: 'dup' } },
+    epicIssue('BI-9', 'Aberto', 'Daily épico'),
+  ] });
+  const svc = createWorklogService({ client: jira.client, baseUrl: BASE, supportService: createSupportService({ client: jira.client, baseUrl: BASE }), ai: { enabled: false } });
+  const ok = await svc.findBySummary('daily cosarq - bi - 11/2026');
+  assert.equal(ok.key, 'SIJUD-27633');
+  assert.equal(ok.available, true);
+  assert.match((await svc.findBySummary('Dup')).error, /Mais de uma.*SIJUD-5.*SIJUD-6/);
+  assert.equal((await svc.findBySummary('Daily épico')).available, false);
+  assert.match((await svc.findBySummary('Nada disso')).error, /Nenhuma tarefa/);
+});

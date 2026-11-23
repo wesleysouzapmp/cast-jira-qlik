@@ -128,7 +128,7 @@ Lança horas nas tarefas de apoio dos seus épicos em aberto. Os lançamentos s�
 O bloco **Apontamentos automáticos**, em Apontar horas, grava um apontamento fixo todo dia útil sem você clicar. Serve, por exemplo, para a daily: `SIJUD-27633`, 09:00, 15m.
 
 - **Regra.** Cada regra tem:
-  - a tarefa (qualquer uma, exceto épico; o app confere no Jira ao salvar);
+  - a tarefa (qualquer uma, exceto épico; o app confere no Jira ao salvar). Informe a **chave** (`SIJUD-27633`) ou o **texto exato do título**. No texto, `{MM/AAAA}` vira o mês de cada dia (`{MM}` e `{AAAA}` também valem). Com `Daily COSARQ - BI - {MM/AAAA}`, os dias de novembro vão para a tarefa "Daily COSARQ - BI - 11/2026", os de dezembro para a "…12/2026", e assim por diante. A tela sugere a troca quando o texto tem um mês fixo. Se a tarefa do mês ainda não existe, o dia fica como erro e é tentado de novo a cada 15 minutos. Se houver mais de uma tarefa com o mesmo título, nada é gravado;
   - o horário de início e a duração;
   - o comentário (padrão: "Participação na reunião diária.");
   - a data de início (padrão: hoje; pode ser passada ou futura);

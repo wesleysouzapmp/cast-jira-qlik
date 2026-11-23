@@ -49,6 +49,8 @@ const issues = new Map([
   task('QSENSE-4058', 'BI-2861', 'implementacao', 'Concluído'),
   task('QSENSE-5100', 'BI-3001', 'analise', 'Aberto'),
   task('QSENSE-5101', 'BI-3001', 'implementacao', 'Aberto'),
+  // Dailies mensais, para testar regra automática pelo texto com {MM/AAAA}.
+  ...['10', '11'].map((m, n) => ({ key: `SIJUD-2763${n}`, fields: { summary: `Daily COSARQ - BI - ${m}/2026`, issuetype: { name: 'Tarefa', hierarchyLevel: 0 }, status: { name: 'Em Execução' }, project: { key: 'SIJUD' }, timespent: 0 } })),
   { key: 'SIJUD-1', fields: { summary: 'Atendimento SIJUD (fora das tarefas de apoio)', issuetype: { name: 'Tarefa', hierarchyLevel: 0 }, status: { name: 'Em Execução' }, project: { key: 'SIJUD' }, timespent: 0 } },
 ].map((i) => [i.key, i]));
 // Semana anterior: segunda 8h (na meta), terça 9h (acima), quarta 3h (abaixo) — para ver as cores do calendário.
@@ -86,6 +88,9 @@ const client = {
       else if (jql.startsWith('project = QSENSE')) {
         const keys = jql.match(/parent in \(([^)]*)\)/)[1].split(',').map((s) => s.trim());
         list = [...issues.values()].filter((i) => keys.includes(i.fields.parent?.key));
+      } else if (jql.startsWith('summary ~')) {
+        const phrase = jql.match(/^summary ~ "\\"(.*)\\""/)[1].toLowerCase();
+        list = [...issues.values()].filter((i) => (i.fields.summary ?? '').toLowerCase().includes(phrase));
       } else if (jql.startsWith('worklogAuthor')) {
         const [, from, to] = jql.match(/worklogDate >= "([^"]+)" AND worklogDate <= "([^"]+)"/);
         list = [...issues.values()].filter((i) => (worklogs[i.key] ?? []).some((w) => w.started.slice(0, 10) >= from && w.started.slice(0, 10) <= to));

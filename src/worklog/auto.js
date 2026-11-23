@@ -62,9 +62,22 @@ export function nextRun({ rule, today, nowMin, holidays = new Set() }) {
   return d ? `${d} ${rule.start}` : null;
 }
 
+// Texto da tarefa com mês variável: {MM/AAAA}, {MM} e {AAAA} viram o mês/ano do dia apontado.
+const PLACEHOLDER_RE = /\{(MM\/AAAA|MM|AAAA)\}/;
+export function summaryFor(text, date) {
+  const [y, m] = date.split('-');
+  return text.replaceAll('{MM/AAAA}', `${m}/${y}`).replaceAll('{MM}', m).replaceAll('{AAAA}', y);
+}
+
+// A tarefa da regra é a chave (key) ou o texto do título (summary), nunca os dois.
 export function normalizeRule(input = {}, { today }) {
   const { key, start, minutes } = input;
-  if (typeof key !== 'string' || !KEY_RE.test(key)) throw new RangeError('Chave de tarefa inválida (ex.: SIJUD-123).');
+  const summary = typeof input.summary === 'string' ? input.summary.trim().replace(/\s+/g, ' ') : '';
+  const hasKey = key !== undefined && key !== null && key !== '';
+  if (hasKey && summary) throw new RangeError('Informe a chave ou o texto da tarefa, não os dois.');
+  if (!hasKey && !summary) throw new RangeError('Informe a chave (ex.: SIJUD-123) ou o texto da tarefa.');
+  if (hasKey && (typeof key !== 'string' || !KEY_RE.test(key))) throw new RangeError('Chave de tarefa inválida (ex.: SIJUD-123).');
+  if (summary && (summary.length < 3 || summary.length > 255)) throw new RangeError('Texto da tarefa: de 3 a 255 caracteres.');
   if (typeof start !== 'string' || !HHMM_RE.test(start)) throw new RangeError('Horário inválido (use HH:MM, ex.: 09:00).');
   if (!Number.isInteger(minutes) || minutes < 1 || minutes > 480) throw new RangeError('Duração inválida (de 1 minuto a 8h).');
   if (hhmmToMin(start) + minutes > 1440) throw new RangeError('O apontamento tem de terminar no mesmo dia.');
@@ -75,7 +88,7 @@ export function normalizeRule(input = {}, { today }) {
   if (until !== null && until < since) throw new RangeError('A data de fim não pode ser anterior à data de início.');
   const comment = input.comment === undefined || input.comment === null || String(input.comment).trim() === '' ? DEFAULT_COMMENT : input.comment;
   if (typeof comment !== 'string' || comment.length > 500) throw new RangeError('Comentário: no máximo 500 caracteres.');
-  return { key, start, minutes, comment: comment.trim(), since, until, enabled: input.enabled === undefined ? true : Boolean(input.enabled) };
+  return { key: hasKey ? key : null, summary: summary || null, start, minutes, comment: comment.trim(), since, until, enabled: input.enabled === undefined ? true : Boolean(input.enabled) };
 }
 
 // ---------- arquivos ----------
@@ -130,9 +143,20 @@ export function createAutoScheduler({ store, service, holidays, now = () => Date
   async function holidaySet(from, to) {
     return new Set((await holidays.between(from, to)).keys());
   }
-  async function checkKey(key) {
-    const [t] = await service.describe([key]);
-    if (!t.available) throw new RangeError(t.error);
+  // Confere a tarefa da regra no Jira ao salvar. Texto com mês variável sem tarefa no mês: salva com aviso.
+  async function checkTarget(rule) {
+    if (rule.key) {
+      const [t] = await service.describe([rule.key]);
+      if (!t.available) throw new RangeError(t.error);
+      return {};
+    }
+    const today = localNow(now()).date;
+    const date = rule.since > today ? rule.since : today;
+    const text = summaryFor(rule.summary, date);
+    const f = await service.findBySummary(text);
+    if (f.available) return { resolved: { date, text, key: f.key } };
+    if (!PLACEHOLDER_RE.test(rule.summary)) throw new RangeError(f.error);
+    return { warning: `${f.error} A regra foi salva; nos dias desse mês o app tenta de novo a cada 15 minutos.` };
   }
 
   async function tickNow() {
@@ -144,20 +168,36 @@ export function createAutoScheduler({ store, service, holidays, now = () => Date
     const hol = await holidaySet(addDays(today, -LOOKBACK_DAYS), today);
     const logData = await store.readLog();
     const out = [];
+    const found = new Map(); // texto → resultado da busca (uma vez por execução)
+    const find = async (text) => {
+      if (!found.has(text)) found.set(text, await service.findBySummary(text).catch((err) => ({ available: false, error: err?.message ?? String(err) })));
+      return found.get(text);
+    };
     for (const rule of list) {
       for (const date of dueDates({ rule, today, nowMin, holidays: hol })) {
         const id = `${rule.id}|${date}`;
         if (logData.done[id]) continue;
         if (t - (lastError.get(id) ?? -Infinity) < RETRY_MS) continue;
-        const slot = { taskKey: rule.key, date, start: rule.start, minutes: rule.minutes, comment: rule.comment };
         let r;
-        try { r = await service.autoLog(slot); } catch (err) { r = { status: 'error', message: err?.message ?? String(err) }; }
-        const entry = { at: new Date(t).toISOString(), ruleId: rule.id, key: rule.key, date, start: rule.start, minutes: rule.minutes, status: r.status, ...(r.message ? { message: r.message } : {}), ...(r.worklogId ? { worklogId: String(r.worklogId) } : {}) };
+        let taskKey = rule.key;
+        let label = rule.key;
+        if (rule.summary) {
+          const text = summaryFor(rule.summary, date);
+          const f = await find(text);
+          label = f.available ? f.key : text;
+          if (f.available) taskKey = f.key;
+          else r = { status: 'error', message: f.error };
+        }
+        if (!r) {
+          const slot = { taskKey, date, start: rule.start, minutes: rule.minutes, comment: rule.comment };
+          try { r = await service.autoLog(slot); } catch (err) { r = { status: 'error', message: err?.message ?? String(err) }; }
+        }
+        const entry = { at: new Date(t).toISOString(), ruleId: rule.id, key: label, date, start: rule.start, minutes: rule.minutes, status: r.status, ...(r.message ? { message: r.message } : {}), ...(r.worklogId ? { worklogId: String(r.worklogId) } : {}) };
         if (r.status === 'error') lastError.set(id, t);
         else { lastError.delete(id); logData.done[id] = { status: r.status, at: entry.at }; }
         logData.history.unshift(entry);
         out.push(entry);
-        log(`[agendamentos] ${rule.key} ${date} ${rule.start}: ${r.status}${r.message ? ` — ${r.message}` : ''}`);
+        log(`[agendamentos] ${label} ${date} ${rule.start}: ${r.status}${r.message ? ` — ${r.message}` : ''}`);
       }
     }
     if (out.length) {
@@ -189,19 +229,20 @@ export function createAutoScheduler({ store, service, holidays, now = () => Date
     status: () => serial(status),
     addRule: (input) => serial(async () => {
       const rule = normalizeRule(input, { today: localNow(now()).date });
-      await checkKey(rule.key);
+      const check = await checkTarget(rule);
       const d = await rules();
       if (d.rules.length >= MAX_RULES) throw new RangeError(`No máximo ${MAX_RULES} regras.`);
       const created = { id: crypto.randomUUID().slice(0, 8), ...rule };
       await store.writeRules({ paused: d.paused, rules: [...d.rules, created] });
-      return created;
+      return { ...created, ...check };
     }),
     updateRule: (id, input) => serial(async () => {
       const d = await rules();
       const i = d.rules.findIndex((r) => r.id === id);
       if (i < 0) throw new RangeError('Regra não encontrada.');
       const rule = normalizeRule(input, { today: localNow(now()).date });
-      if (rule.key !== d.rules[i].key) await checkKey(rule.key);
+      const prev = d.rules[i];
+      const check = rule.key !== prev.key || rule.summary !== (prev.summary ?? null) || rule.since !== prev.since ? await checkTarget(rule) : {};
       d.rules[i] = { id, ...rule };
       await store.writeRules(d);
       // Conflitos e erros dessa regra voltam a ser tentados com a regra nova.
@@ -210,7 +251,7 @@ export function createAutoScheduler({ store, service, holidays, now = () => Date
       for (const [k, v] of Object.entries(logData.done)) if (k.startsWith(`${id}|`) && v.status === 'conflict') { delete logData.done[k]; changed = true; }
       if (changed) await store.writeLog(logData);
       for (const k of lastError.keys()) if (k.startsWith(`${id}|`)) lastError.delete(k);
-      return d.rules[i];
+      return { ...d.rules[i], ...check };
     }),
     removeRule: (id) => serial(async () => {
       const d = await rules();

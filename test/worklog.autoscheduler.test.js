@@ -17,6 +17,10 @@ function setup({ now = Date.parse('2026-11-10T12:30:00Z'), results = {}, disable
   const store = createAutoStore({ file: 'rules.json', logFile: 'log.json', ...fs, log: () => {} });
   const calls = [];
   const service = {
+    async findBySummary(text) {
+      const map = { 'Daily COSARQ - BI - 10/2026': 'SIJUD-100', 'Daily COSARQ - BI - 11/2026': 'SIJUD-27633' };
+      return map[text] ? { key: map[text], summary: text, available: true } : { available: false, error: `Nenhuma tarefa com o texto "${text}".` };
+    },
     async describe(keys) { return keys.map((k) => (k === 'BI-77' ? { key: k, available: false, error: 'BI-77 é um épico.' } : { key: k, summary: 'Daily', available: true })); },
     async autoLog(slot) { calls.push(slot); const r = results[slot.date]; if (r instanceof Error) throw r; return r ?? { status: 'created', worklogId: `w-${slot.date}` }; },
   };
@@ -99,4 +103,35 @@ test('arquivo de regras inválido vira lista vazia, sem derrubar o agendador', a
   const st = await s.sched.status();
   assert.deepEqual(st.rules, []);
   await s.sched.tick();
+});
+
+test('regra pelo texto: cada dia usa a tarefa do seu mês', async () => {
+  const s = setup({ now: Date.parse('2026-11-03T18:00:00Z') }); // terça 03/11, 15:00 local
+  const r = await s.sched.addRule({ summary: 'Daily COSARQ - BI - {MM/AAAA}', start: '13:30', minutes: 30, since: '2026-10-29' });
+  assert.equal(r.summary, 'Daily COSARQ - BI - {MM/AAAA}');
+  assert.equal(r.key, null);
+  await s.sched.tick();
+  assert.deepEqual(s.calls.map((c) => `${c.date} ${c.taskKey}`), ['2026-10-29 SIJUD-100', '2026-10-30 SIJUD-100', '2026-11-02 SIJUD-27633', '2026-11-03 SIJUD-27633']);
+  const st = await s.sched.status();
+  assert.equal(st.history.find((h) => h.date === '2026-11-03').key, 'SIJUD-27633');
+});
+
+test('regra pelo texto: mês sem tarefa avisa ao salvar e vira erro (tentado de novo depois)', async () => {
+  const s = setup({ now: Date.parse('2026-12-01T18:00:00Z') }); // terça 01/12, 15:00 local
+  const r = await s.sched.addRule({ summary: 'Daily COSARQ - BI - {MM/AAAA}', start: '13:30', minutes: 30, since: '2026-12-01' });
+  assert.match(r.warning, /12\/2026/);
+  await s.sched.tick();
+  assert.equal(s.calls.length, 0);
+  const st = await s.sched.status();
+  assert.equal(st.history[0].status, 'error');
+  assert.equal(st.history[0].key, 'Daily COSARQ - BI - 12/2026');
+  assert.match(st.history[0].message, /Nenhuma tarefa/);
+});
+
+test('regra pelo texto sem mês variável e sem tarefa é recusada ao salvar', async () => {
+  const s = setup();
+  await assert.rejects(s.sched.addRule({ summary: 'Daily inexistente', start: '13:30', minutes: 30 }), /Nenhuma tarefa/);
+  const ok = await s.sched.addRule({ summary: 'Daily COSARQ - BI - {MM/AAAA}', start: '13:30', minutes: 30 });
+  assert.equal(ok.resolved.key, 'SIJUD-27633');
+  assert.equal(ok.warning, undefined);
 });

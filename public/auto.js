@@ -4,6 +4,27 @@ const $ = (id) => document.getElementById(id);
 const STATUS = { created: 'gravado', skipped: 'pulado', conflict: 'conflito', error: 'erro' };
 const STATUS_CLASS = { created: 'ok', skipped: 'muted', conflict: 'bad', error: 'bad' };
 const state = { rules: [], editing: null, busy: false };
+const KEY_RE = /^[A-Z][A-Z0-9_]+-\d+$/;
+const MONTH_RE = /\b(0[1-9]|1[0-2])\/(\d{4})\b/;
+const ruleLabel = (r) => r.key ?? r.summary;
+
+// Chave (SIJUD-123, em qualquer caixa) ou texto do título.
+function readTarget() {
+  const raw = $('autoKey').value.trim();
+  return KEY_RE.test(raw.toUpperCase()) ? { key: raw.toUpperCase() } : { summary: raw };
+}
+
+// Texto com um mês fixo (ex.: 11/2026): sugere trocar por {MM/AAAA}.
+function updateHint() {
+  const v = $('autoKey').value;
+  const m = !KEY_RE.test(v.trim().toUpperCase()) && !v.includes('{') && v.match(MONTH_RE);
+  const hint = $('autoHint');
+  if (!m) { hint.hidden = true; hint.replaceChildren(); return; }
+  const btn = el('button', { type: 'button' }, `Trocar ${m[0]} por {MM/AAAA}`);
+  btn.addEventListener('click', () => { $('autoKey').value = v.replace(MONTH_RE, '{MM/AAAA}'); updateHint(); $('autoKey').focus(); });
+  hint.replaceChildren(`Com ${m[0]} fixo, a regra só acha a tarefa desse mês. Com {MM/AAAA}, cada dia usa a tarefa do próprio mês. `, btn);
+  hint.hidden = false;
+}
 
 function el(tag, props = {}, ...children) {
   const node = document.createElement(tag);
@@ -46,6 +67,7 @@ const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${Stri
 function resetForm() {
   state.editing = null;
   $('autoKey').value = '';
+  updateHint();
   $('autoStart').value = '09:00';
   $('autoMinutes').value = '15m';
   $('autoSince').value = todayIso();
@@ -57,7 +79,8 @@ function resetForm() {
 
 function fillForm(r) {
   state.editing = r.id;
-  $('autoKey').value = r.key;
+  $('autoKey').value = ruleLabel(r);
+  updateHint();
   $('autoStart').value = r.start;
   $('autoMinutes').value = fmtMin(r.minutes);
   $('autoSince').value = r.since;
@@ -90,7 +113,7 @@ function render(st) {
     const del = el('button', { title: 'Excluir a regra (os apontamentos já gravados ficam no Jira)' }, 'Excluir');
     del.addEventListener('click', () => remove(r));
     return el('tr', {},
-      el('td', { class: 'nowrap' }, r.key),
+      el('td', { class: 'wrap' }, ruleLabel(r)),
       el('td', { class: 'nowrap' }, `${r.start} · ${fmtMin(r.minutes)}`),
       el('td', { class: 'wrap' }, r.comment),
       el('td', { class: 'nowrap' }, r.until ? `${br(r.since)} a ${br(r.until)}` : `desde ${br(r.since)}`),
@@ -107,7 +130,7 @@ function render(st) {
     el('td', { class: 'wrap' }, h.message ?? ''))) : [el('tr', {}, el('td', { colSpan: 5, class: 'muted' }, 'Nada executado ainda.'))]));
 }
 
-const pick = (r) => ({ key: r.key, start: r.start, minutes: r.minutes, comment: r.comment, since: r.since, until: r.until ?? null, enabled: r.enabled });
+const pick = (r) => ({ key: r.key ?? null, summary: r.summary ?? null, start: r.start, minutes: r.minutes, comment: r.comment, since: r.since, until: r.until ?? null, enabled: r.enabled });
 
 function situation(r) {
   if (!r.enabled) return el('span', { class: 'badge' }, 'pausada');
@@ -121,9 +144,10 @@ async function load() {
 
 async function save(id, body) {
   try {
-    if (id) await call('PUT', `/api/auto/rules/${encodeURIComponent(id)}`, body);
-    else await call('POST', '/api/auto/rules', body);
-    msg(id ? 'Regra salva.' : 'Regra criada. Os dias pendentes são gravados no próximo minuto (ou clique em Rodar agora).');
+    const { rule } = id ? await call('PUT', `/api/auto/rules/${encodeURIComponent(id)}`, body) : await call('POST', '/api/auto/rules', body);
+    const found = rule?.resolved ? ` Tarefa encontrada para ${rule.resolved.date.split('-').reverse().join('/')}: ${rule.resolved.key}.` : '';
+    if (rule?.warning) msg(`${id ? 'Regra salva' : 'Regra criada'}, mas atenção: ${rule.warning}`, true);
+    else msg((id ? 'Regra salva.' : 'Regra criada. Os dias pendentes são gravados no próximo minuto (ou clique em Rodar agora).') + found);
     return true;
   } catch (e) {
     msg(e.message, true);
@@ -137,7 +161,7 @@ async function submitForm() {
   const minutes = parseMinutes($('autoMinutes').value);
   if (!minutes) return msg('Duração inválida (ex.: 15m, 1h 30m).', true);
   const body = {
-    key: $('autoKey').value.trim().toUpperCase(),
+    ...readTarget(),
     start: $('autoStart').value,
     minutes,
     since: $('autoSince').value || undefined,
@@ -153,7 +177,7 @@ async function submitForm() {
 }
 
 async function remove(r) {
-  if (!confirm(`Excluir a regra ${r.key} às ${r.start}? Os apontamentos já gravados continuam no Jira.`)) return;
+  if (!confirm(`Excluir a regra ${ruleLabel(r)} às ${r.start}? Os apontamentos já gravados continuam no Jira.`)) return;
   try { await call('DELETE', `/api/auto/rules/${encodeURIComponent(r.id)}`); msg('Regra excluída.'); if (state.editing === r.id) resetForm(); } catch (e) { msg(e.message, true); }
   await load();
 }
@@ -178,6 +202,7 @@ async function runNow() {
 export function setupAuto() {
   resetForm();
   $('autoSave').addEventListener('click', submitForm);
+  $('autoKey').addEventListener('input', updateHint);
   $('autoCancel').addEventListener('click', () => { resetForm(); msg(''); });
   $('autoRun').addEventListener('click', runNow);
   $('autoPaused').addEventListener('change', async (ev) => {

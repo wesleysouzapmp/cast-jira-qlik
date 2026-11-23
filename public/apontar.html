@@ -97,13 +97,14 @@
       <p class="help">Todo dia útil (sem fins de semana e feriados), no horário da regra, o app grava o apontamento sozinho — só enquanto estiver rodando. Dias perdidos (até 31 dias, nunca antes da data de início) são gravados quando ele voltar. Não duplica, não grava sobre outro apontamento seu e não muda status.</p>
       <p id="autoBanner" class="bad" hidden></p>
       <div class="grid-fields">
-        <label>Tarefa<input id="autoKey" placeholder="ex.: SIJUD-27633"></label>
+        <label class="span2" title="Chave (SIJUD-27633) ou texto exato do título. Use {MM/AAAA} para o mês de cada dia.">Tarefa (chave ou texto)<input id="autoKey" placeholder="SIJUD-27633 ou Daily COSARQ - BI - {MM/AAAA}" maxlength="255"></label>
         <label>Início<input type="time" id="autoStart"></label>
         <label>Duração<input id="autoMinutes" placeholder="15m"></label>
         <label title="Primeiro dia em que a regra vale; pode ser no passado (recupera até 31 dias) ou no futuro">Data de início<input type="date" id="autoSince"></label>
         <label title="Último dia em que a regra vale. Vazio: sem fim">Data de fim<input type="date" id="autoUntil"></label>
         <label class="span2">Comentário<input id="autoComment" placeholder="Participação na reunião diária." maxlength="500"></label>
       </div>
+      <p id="autoHint" class="help" hidden></p>
       <div class="actions">
         <button id="autoSave" class="primary">Adicionar regra</button>
         <button id="autoCancel" hidden>Cancelar edição</button>

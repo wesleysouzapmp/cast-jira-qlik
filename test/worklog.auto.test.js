@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { localNow, dueDates, checkSlot, nextRun, normalizeRule } from '../src/worklog/auto.js';
+import { localNow, dueDates, checkSlot, nextRun, normalizeRule, summaryFor } from '../src/worklog/auto.js';
 
 const rule = (o = {}) => ({ id: 'r1', key: 'SIJUD-1', start: '09:00', minutes: 15, comment: 'Daily', since: '2026-11-02', enabled: true, ...o });
 
@@ -45,7 +45,7 @@ test('nextRun: hoje se ainda não passou; senão o próximo dia útil', () => {
 
 test('normalizeRule valida e preenche o padrão', () => {
   const r = normalizeRule({ key: 'SIJUD-27633', start: '09:00', minutes: 15 }, { today: '2026-11-10' });
-  assert.deepEqual(r, { key: 'SIJUD-27633', start: '09:00', minutes: 15, comment: 'Participação na reunião diária.', since: '2026-11-10', until: null, enabled: true });
+  assert.deepEqual(r, { key: 'SIJUD-27633', start: '09:00', minutes: 15, comment: 'Participação na reunião diária.', since: '2026-11-10', until: null, enabled: true, summary: null });
   assert.equal(normalizeRule({ key: 'SIJUD-1', start: '09:00', minutes: 15, since: '2026-11-10', until: '2026-12-19' }, { today: '2026-11-10' }).until, '2026-12-19');
   assert.equal(normalizeRule({ key: 'SIJUD-1', start: '09:00', minutes: 15, until: '' }, { today: '2026-11-10' }).until, null);
   for (const bad of [
@@ -70,4 +70,20 @@ test('data de fim: não grava depois dela e a próxima execução some quando el
   assert.equal(nextRun({ rule: rule({ until: '2026-11-10' }), today: '2026-11-10', nowMin: 10 * 60, holidays: new Set() }), null);
   // fim num feriado/fim de semana: não há próximo dia útil dentro da vigência
   assert.equal(nextRun({ rule: rule({ until: '2026-11-15' }), today: '2026-11-13', nowMin: 10 * 60, holidays: new Set() }), null);
+});
+
+test('summaryFor troca {MM/AAAA}, {MM} e {AAAA} pelo mês do dia', () => {
+  assert.equal(summaryFor('Daily COSARQ - BI - {MM/AAAA}', '2026-12-03'), 'Daily COSARQ - BI - 12/2026');
+  assert.equal(summaryFor('Daily {MM}-{AAAA}', '2027-01-15'), 'Daily 01-2027');
+  assert.equal(summaryFor('Daily fixa', '2026-11-10'), 'Daily fixa');
+});
+
+test('normalizeRule aceita texto da tarefa no lugar da chave', () => {
+  const r = normalizeRule({ summary: '  Daily COSARQ - BI - {MM/AAAA} ', start: '13:30', minutes: 30 }, { today: '2026-11-10' });
+  assert.equal(r.key, null);
+  assert.equal(r.summary, 'Daily COSARQ - BI - {MM/AAAA}');
+  assert.throws(() => normalizeRule({ start: '13:30', minutes: 30 }, { today: '2026-11-10' }), RangeError);
+  assert.throws(() => normalizeRule({ key: 'SIJUD-1', summary: 'Daily', start: '13:30', minutes: 30 }, { today: '2026-11-10' }), RangeError);
+  assert.throws(() => normalizeRule({ summary: 'ab', start: '13:30', minutes: 30 }, { today: '2026-11-10' }), RangeError);
+  assert.throws(() => normalizeRule({ summary: 'x'.repeat(256), start: '13:30', minutes: 30 }, { today: '2026-11-10' }), RangeError);
 });
