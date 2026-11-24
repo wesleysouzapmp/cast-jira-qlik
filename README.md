@@ -150,6 +150,10 @@ O bloco **Apontamentos automáticos**, em Apontar horas, grava um apontamento fi
   - Para desligar o agendador inteiro, coloque `AUTO_WORKLOG=off` no `.env` e reinicie o app.
 - **O app precisa estar rodando.** Para ele subir sozinho quando você entrar no Windows, crie uma tarefa no Agendador de Tarefas. Use o disparador "Ao fazer logon" e a ação `node src/index.js`, com "Iniciar em" apontando para a pasta do projeto.
 
+## Rodar no Oracle Cloud (Always Free)
+
+Para o agendador rodar 24 horas sem o seu PC ligado, siga [deploy/oracle/README.md](deploy/oracle/README.md). O guia cobre a criação da VM, o `setup.sh` (que instala, atualiza e cria o serviço systemd) e o acesso por túnel SSH, sem abrir portas.
+
 ## Estrutura
 
 ```
