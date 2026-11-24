@@ -18,14 +18,14 @@ as_app() { sudo -u "$APP_USER" -H "$@"; }
 
 say "Pacotes básicos"
 sudo apt-get update -y
-sudo apt-get install -y git curl ca-certificates
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y git curl ca-certificates
 
 current_node_major() { command -v node >/dev/null 2>&1 && node -p 'process.versions.node.split(".")[0]' || echo 0; }
 if [ "$(current_node_major)" -lt 22 ]; then
   say "Node.js ${NODE_MAJOR} (repositório oficial NodeSource)"
   curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" -o /tmp/nodesource_setup.sh
   sudo -E bash /tmp/nodesource_setup.sh
-  sudo apt-get install -y nodejs
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
 fi
 echo "node $(node --version), npm $(npm --version)"
 
