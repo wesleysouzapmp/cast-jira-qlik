@@ -6,3 +6,4 @@ node_modules/
 favoritos.json
 agendamentos.json
 agendamentos-log.json
+.npm/

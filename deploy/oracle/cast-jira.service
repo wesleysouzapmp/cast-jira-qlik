@@ -1,0 +1,29 @@
+# Modelo do serviço; o setup.sh troca __USER__, __DIR__ e __NODE__ e instala em /etc/systemd/system/cast-jira.service.
+[Unit]
+Description=cast-jira-qlik (tarefas de apoio, apontamentos e agendamentos no Jira)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__DIR__
+ExecStart=__NODE__ src/index.js
+Restart=always
+RestartSec=10
+Environment=NODE_ENV=production
+
+# Endurecimento: só a pasta do app é gravável (favoritos.json, agendamentos*.json).
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=__DIR__
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
