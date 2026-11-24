@@ -25,6 +25,12 @@ Os comandos de PC abaixo são para o **PowerShell do Windows**. Os comandos de V
    Get-Content $HOME\.ssh\oracle_cast.pub
    ```
    Cole o conteúdo do `.pub` no campo. A chave privada (`oracle_cast`, sem `.pub`) não sai do seu PC.
+
+   O SSH do Windows recusa chaves que outros usuários conseguem ler (aviso "UNPROTECTED PRIVATE KEY FILE"). Se aparecer esse aviso, deixe a chave só com o seu usuário:
+   ```powershell
+   icacls $HOME.sshoracle_cast /inheritance:r /grant:r "$($env:USERDOMAIN)$($env:USERNAME):(R,W)"
+   ```
+   Use um PowerShell aberto normalmente, não "como administrador".
 6. Clique em **Create**. Quando a instância ficar *Running*, anote o **Public IP address**. Nos comandos abaixo, ele aparece como `IP_DA_VM`.
 
 ## 2. Instalar o app na VM
@@ -52,10 +58,11 @@ Na primeira vez, ele termina pedindo o `.env`.
 
 **Use um token do Jira novo.** O token antigo apareceu em conversa e deve ser revogado. Gere outro em <https://id.atlassian.com/manage-profile/security/api-tokens>.
 
-Na VM, edite o arquivo e preencha `JIRA_EMAIL` e `JIRA_API_TOKEN` (e `ANTHROPIC_API_KEY`, se usar a IA):
+Na VM, grave o e-mail e o token sem editor. O comando pergunta os dois, e o token não aparece na tela (cole com o botão direito):
 ```bash
-sudo nano /opt/cast-jira-qlik/.env
+sudo bash /opt/cast-jira-qlik/deploy/oracle/set-env.sh
 ```
+Para outros campos, como `ANTHROPIC_API_KEY`, use `sudo nano /opt/cast-jira-qlik/.env` (Ctrl+O e Enter para salvar, Ctrl+X para sair).
 
 Para levar as regras, o histórico e os favoritos que você já tem, envie os arquivos a partir do PC, na pasta do projeto:
 ```powershell
