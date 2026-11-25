@@ -83,3 +83,16 @@ test('secrets não vazam token nem chave; ai usa a chave do usuário; favoritos/
   assert.deepEqual(await factory.forUser(b).favorites.list(), []);
   assert.deepEqual(await ca.autoStore.readRules(), { paused: false, rules: [] });
 });
+
+test('401 tardio de contexto já invalidado não marca o token novo como inválido', async () => {
+  const { factory, users, a, setStatus } = setup();
+  const ctx1 = factory.forUser(a);
+  users.setJira(a.id, { email: 'a@jira.com', token: 'tok-A2', accountId: 'acc-A' });
+  users.markToken(a.id, 'ok');
+  factory.invalidate(a.id);
+  const ctx2 = factory.forUser(a);
+  setStatus(401);
+  await ctx1.client.call({ path: '/x' });
+  assert.equal(users.getSecrets(a.id).tokenStatus, 'ok');
+  assert.equal(factory.forUser(a), ctx2);
+});

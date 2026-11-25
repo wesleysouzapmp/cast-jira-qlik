@@ -29,8 +29,11 @@ export function createContextFactory({ db, users, baseUrl, holidays, makeClient 
       async call(opts) {
         const res = await raw.call(opts);
         if (res && res.status === 401) {
-          users.markToken(userId, 'invalid');
-          if (cache.get(userId) === ctx) invalidate(userId);
+          // Só age se este contexto ainda é o vigente; 401 tardio de contexto antigo é ignorado.
+          if (cache.get(userId) === ctx) {
+            users.markToken(userId, 'invalid');
+            invalidate(userId);
+          }
         }
         return res;
       },
