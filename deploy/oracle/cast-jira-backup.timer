@@ -1,0 +1,10 @@
+[Unit]
+Description=Backup diário do banco do cast-jira-qlik
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

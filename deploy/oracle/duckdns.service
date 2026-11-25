@@ -1,0 +1,15 @@
+# Modelo; o setup.sh troca __USER__ e __DIR__. Só é instalado se DUCKDNS_DOMAIN e DUCKDNS_TOKEN estiverem no .env.
+# A saída do curl é capturada: o log mostra só OK ou KO, nunca a URL com o token.
+[Unit]
+Description=Atualiza o IP no DuckDNS
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=__USER__
+Group=__USER__
+EnvironmentFile=__DIR__/.env
+NoNewPrivileges=true
+PrivateTmp=true
+ExecStart=/bin/sh -c 'r=$$(curl -fsS -m 30 "https://www.duckdns.org/update?domains=$${DUCKDNS_DOMAIN}&token=$${DUCKDNS_TOKEN}&ip=" 2>/dev/null) || r=KO; echo "duckdns: $$r"; [ "$$r" = OK ]'

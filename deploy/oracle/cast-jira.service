@@ -14,7 +14,7 @@ Restart=always
 RestartSec=10
 Environment=NODE_ENV=production
 
-# Endurecimento: só a pasta do app é gravável (favoritos.json, agendamentos*.json).
+# Endurecimento: só a pasta do app é gravável (inclui data/, onde fica o banco app.db).
 NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=__DIR__
