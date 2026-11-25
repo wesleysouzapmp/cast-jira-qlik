@@ -28,11 +28,17 @@ export function parseArgs(argv) {
 }
 
 // Pergunta no terminal; com hidden=true nada do que é digitado é ecoado.
-export function createPrompt() {
+export function createPrompt({ onInterrupt } = {}) {
   return (question, { hidden = false } = {}) => new Promise((resolve) => {
     let muted = false;
     const output = new Writable({ write(chunk, _enc, cb) { if (!muted) process.stdout.write(chunk); cb(); } });
     const rl = readline.createInterface({ input: process.stdin, output, terminal: true });
+    rl.on('SIGINT', () => {
+      rl.close();
+      process.stdout.write('\n');
+      if (onInterrupt) onInterrupt();
+      process.exit(130);
+    });
     rl.question(question, (answer) => {
       rl.close();
       if (hidden) process.stdout.write('\n');
@@ -43,7 +49,9 @@ export function createPrompt() {
 }
 
 function firstAdmin(users) {
-  return users.list().find((u) => u.role === 'admin' && u.active) ?? null;
+  const admins = users.list().filter((u) => u.role === 'admin' && u.active);
+  admins.sort((a, b) => a.createdAt - b.createdAt || a.email.localeCompare(b.email));
+  return admins[0] ?? null;
 }
 
 async function readPassword({ env, prompt }) {
@@ -88,24 +96,53 @@ async function importJira({ users, adminId, env, makeJiraClient, baseUrl, log })
   return 'ok';
 }
 
-function importFiles({ db, adminId, rootDir, log }) {
-  const present = {};
-  for (const [k, name] of Object.entries(LEGACY)) {
-    const file = path.join(rootDir, name);
-    if (fs.existsSync(file)) present[k] = { file, data: readJson(file) };
+function hasAppData(db, userId) {
+  const n = (sql) => db.prepare(sql).get(userId).n;
+  return n('SELECT COUNT(*) AS n FROM rules WHERE user_id = ?') > 0
+    || n('SELECT COUNT(*) AS n FROM rule_log WHERE user_id = ?') > 0
+    || n('SELECT COUNT(*) AS n FROM rule_done WHERE rule_id IN (SELECT id FROM rules WHERE user_id = ?)') > 0
+    || n('SELECT COUNT(*) AS n FROM favorites WHERE user_id = ?') > 0;
+}
+
+function migratedName(file, now) {
+  const base = `${file}.migrado`;
+  return fs.existsSync(base) ? `${file}.migrado-${now()}` : base;
+}
+
+function importFiles({ db, adminId, rootDir, log, force = false, now = () => Date.now() }) {
+  const present = [];
+  for (const k of ['rules', 'log', 'favorites']) {
+    const file = path.join(rootDir, LEGACY[k]);
+    if (fs.existsSync(file)) present.push({ k, file, data: readJson(file) });
   }
-  const kinds = Object.keys(present);
-  if (!kinds.length) { log('Arquivos antigos: já migrado (nada a importar).'); return []; }
-  importLegacy(db, adminId, {
-    rules: present.rules?.data, log: present.log?.data, favorites: present.favorites?.data,
-  });
+  if (!present.length) {
+    const names = fs.readdirSync(rootDir);
+    const migrated = Object.values(LEGACY).some((n) => names.some((f) => f === `${n}.migrado` || f.startsWith(`${n}.migrado-`)));
+    log(migrated ? 'Arquivos antigos: já migrado (nada a importar).' : 'Arquivos antigos: nenhum arquivo antigo para importar.');
+    return [];
+  }
+  if (!force && hasAppData(db, adminId)) {
+    log('O admin já tem dados no app; nada foi importado e os arquivos antigos foram mantidos. Use --forcar para substituir pelos arquivos.');
+    return [];
+  }
   const moved = [];
-  for (const k of kinds) {
-    fs.renameSync(present[k].file, `${present[k].file}.migrado`);
+  for (const { k, file, data } of present) {
+    importLegacy(db, adminId, { [k]: data });
+    fs.renameSync(file, migratedName(file, now));
     moved.push(LEGACY[k]);
   }
   log(`Arquivos antigos importados e renomeados para .migrado: ${moved.join(', ')}.`);
   return moved;
+}
+
+// Em POSIX, recusa rodar como outro usuário do SO que o dono do diretório de dados.
+export function checkDataDirOwner(dataDir, { stat = fs.statSync, getuid = process.getuid?.bind(process) } = {}) {
+  if (!getuid) return;
+  let st;
+  try { st = stat(dataDir); } catch { return; }
+  if (st.uid !== getuid()) {
+    throw new Error(`O diretório ${dataDir} pertence a outro usuário do sistema (uid ${st.uid}). Rode: sudo -u castjira node src/admin.js ...`);
+  }
 }
 
 export async function runBootstrap({
@@ -127,7 +164,7 @@ export async function runBootstrap({
   }
 
   const jira = await importJira({ users, adminId: admin.id, env, makeJiraClient, baseUrl, log });
-  const imported = importFiles({ db, adminId: admin.id, rootDir, log });
+  const imported = importFiles({ db, adminId: admin.id, rootDir, log, force: Boolean(args.forcar) });
 
   const host = env.PUBLIC_HOST?.trim();
   log('');
@@ -156,6 +193,11 @@ export function runInvite({ users, sessions, env = process.env, args = {}, log =
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   const args = parseArgs(rest);
+  if (cmd !== 'bootstrap' && cmd !== 'invite') {
+    console.log('Uso: node src/admin.js bootstrap [--email x --nome y] [--forcar] | invite [--admin]');
+    process.exitCode = 1;
+    return;
+  }
   try { process.loadEnvFile(path.join(PROJECT_DIR, '.env')); } catch { /* sem .env: usa o ambiente */ }
   const env = process.env;
   const [{ loadMasterKey }, { openDb }, { createUserRepo }, { createSessionRepo }, { createJiraClient }] = await Promise.all([
@@ -163,19 +205,24 @@ async function main() {
   ]);
   const masterKey = loadMasterKey(env);
   const dataDir = path.resolve(env.DATA_DIR?.trim() || path.join(PROJECT_DIR, 'data'));
+  checkDataDirOwner(dataDir);
   fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-  const db = openDb(path.join(dataDir, 'app.db'));
-  const users = createUserRepo(db, masterKey);
-  const sessions = createSessionRepo(db);
-  if (cmd === 'bootstrap') {
-    await runBootstrap({ db, users, env, args, prompt: createPrompt(), makeJiraClient: createJiraClient });
-  } else if (cmd === 'invite') {
-    runInvite({ users, sessions, env, args });
-  } else {
-    console.log('Uso: node src/admin.js bootstrap [--email x --nome y] | invite [--admin]');
-    process.exitCode = 1;
+  try { fs.chmodSync(dataDir, 0o700); } catch { /* Windows: sem permissões POSIX */ }
+  const dbPath = path.join(dataDir, 'app.db');
+  console.log(`Banco: ${dbPath}`);
+  const db = openDb(dbPath);
+  const closeDb = () => { try { db.close(); } catch { /* já fechado */ } };
+  try {
+    const users = createUserRepo(db, masterKey);
+    const sessions = createSessionRepo(db);
+    if (cmd === 'bootstrap') {
+      await runBootstrap({ db, users, env, args, prompt: createPrompt({ onInterrupt: closeDb }), makeJiraClient: createJiraClient });
+    } else {
+      runInvite({ users, sessions, env, args });
+    }
+  } finally {
+    closeDb();
   }
-  db.close();
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

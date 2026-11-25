@@ -8,7 +8,7 @@ import { openDb } from '../src/db/index.js';
 import { createUserRepo } from '../src/db/users.js';
 import { createSessionRepo } from '../src/db/sessions.js';
 import { autoStoreFor, favoritesFor } from '../src/db/userData.js';
-import { runBootstrap, runInvite } from '../src/admin.js';
+import { runBootstrap, runInvite, checkDataDirOwner } from '../src/admin.js';
 
 const RULES = {
   paused: false,
@@ -141,4 +141,39 @@ test('invite: link absoluto com PUBLIC_HOST, válido por 7 dias, criado pelo pri
   assert.ok(Math.abs(peek.expiresAt - (Date.now() + 7 * 864e5)) < 60000);
   const l2 = runInvite({ ...s, env, args: { admin: true } });
   assert.equal(s.sessions.peekInvite(new URL(l2).searchParams.get('token'), 'invite').role, 'admin');
+});
+
+test('admin com dados no app: nada é importado e os arquivos ficam; --forcar substitui', async () => {
+  const s = setup();
+  const ex = s.users.create({ email: 'velho@x.com', name: 'V', role: 'admin', passwordHash: 'h' });
+  const store = autoStoreFor(s.db, ex.id);
+  await store.writeRules({ paused: false, rules: [{ id: 'aaaa1111', key: 'X-1', start: '08:00', minutes: 15, since: '2026-11-01', enabled: true }] });
+  await runBootstrap(s);
+  assert.deepEqual((await store.readRules()).rules.map((r) => r.id), ['aaaa1111']);
+  assert.ok(fs.existsSync(path.join(s.rootDir, 'agendamentos.json')));
+  assert.ok(s.out.some((l) => /--forcar/.test(l)));
+  await runBootstrap({ ...s, args: { forcar: true } });
+  assert.deepEqual((await store.readRules()).rules.map((r) => r.id).sort(), ['ba2f553f', 'e134e535']);
+  assert.ok(fs.existsSync(path.join(s.rootDir, 'agendamentos.json.migrado')));
+});
+
+test('.migrado existente não é sobrescrito: usa nome com timestamp', async () => {
+  const s = setup();
+  fs.writeFileSync(path.join(s.rootDir, 'agendamentos.json.migrado'), 'antigo');
+  await runBootstrap(s);
+  assert.equal(fs.readFileSync(path.join(s.rootDir, 'agendamentos.json.migrado'), 'utf8'), 'antigo');
+  assert.ok(fs.readdirSync(s.rootDir).some((f) => /^agendamentos\.json\.migrado-\d+$/.test(f)));
+});
+
+test('sem arquivos e sem .migrado: nenhum arquivo antigo para importar', async () => {
+  const s = setup({ legacy: false });
+  await runBootstrap(s);
+  assert.ok(s.out.some((l) => /nenhum arquivo antigo para importar/.test(l)));
+  assert.ok(!s.out.some((l) => /já migrado/.test(l)));
+});
+
+test('checkDataDirOwner: recusa dono diferente, aceita igual, ignora sem getuid', () => {
+  assert.throws(() => checkDataDirOwner('/d', { stat: () => ({ uid: 1 }), getuid: () => 2 }), /sudo -u castjira node src\/admin\.js/);
+  checkDataDirOwner('/d', { stat: () => ({ uid: 2 }), getuid: () => 2 });
+  checkDataDirOwner('/d', { stat: () => ({ uid: 1 }), getuid: undefined });
 });
