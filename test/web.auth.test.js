@@ -1,7 +1,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { readdirSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
@@ -255,6 +255,15 @@ test('todos os public/*.js têm sintaxe válida', () => {
   for (const f of readdirSync(dir).filter((n) => n.endsWith('.js'))) {
     const r = spawnSync(process.execPath, ['--check', dir + f], { encoding: 'utf8' });
     assert.equal(r.status, 0, `${f}: ${r.stderr}`);
+  }
+});
+
+test('public/ não usa estilo inline (CSP default-src self)', () => {
+  const dir = fileURLToPath(new URL('../public/', import.meta.url));
+  for (const f of readdirSync(dir)) {
+    const txt = readFileSync(dir + f, 'utf8');
+    if (f.endsWith('.js')) assert.doesNotMatch(txt, /setAttribute\(\s*['"]style['"]/, `${f}: setAttribute style`);
+    if (f.endsWith('.html')) assert.doesNotMatch(txt, /\sstyle\s*=/i, `${f}: atributo style=`);
   }
 });
 

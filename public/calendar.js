@@ -14,7 +14,7 @@ function el(tag, props = {}, ...children) {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(props)) {
     if (k === 'class') node.className = v;
-    else if (k === 'style') node.setAttribute('style', v);
+    else if (k === 'style') node.style.cssText = v;
     else if (k in node) node[k] = v;
     else node.setAttribute(k, v);
   }
