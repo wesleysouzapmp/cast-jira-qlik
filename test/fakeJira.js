@@ -1,7 +1,7 @@
 // Jira simulado com estado, para os testes do apontamento (não contém testes).
 export const ME = 'acc-me';
 
-export function createFakeJira({ issues = [], worklogs = {}, transitionsTo = { 'Em Execução': true }, failWorklogFor = [], failDeleteFor = [], delayMs = 0, indexLag = false, searchTz = 'local' } = {}) {
+export function createFakeJira({ issues = [], worklogs = {}, transitionsTo = { 'Em Execução': true }, failWorklogFor = [], failDeleteFor = [], delayMs = 0, indexLag = false, searchTz = 'local', unauthorized = false } = {}) {
   const byKey = new Map(issues.map((i) => [i.key, structuredClone(i)]));
   const wl = structuredClone(worklogs); // key → [{ id, author:{accountId}, started, timeSpentSeconds }]
   const calls = [];
@@ -14,6 +14,7 @@ export function createFakeJira({ issues = [], worklogs = {}, transitionsTo = { '
       calls.push(req);
       await sleep();
       const { method = 'GET', path, query = {}, body } = req;
+      if (unauthorized) return { status: 401, ok: false, data: { message: 'Unauthorized (simulado)' } };
       if (path === '/rest/api/3/myself') return ok({ accountId: ME });
       if (path === '/rest/api/3/search/jql') {
         const jql = body.jql;
