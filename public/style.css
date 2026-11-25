@@ -231,3 +231,20 @@ label.inline { display: inline-flex; align-items: center; gap: 6px; }
 .auth-page form { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
 .auth-page .msg { margin: 10px 0 0; min-height: 1.4em; }
 .auth-page .msg.err { color: var(--err); }
+
+/* Sessão no cabeçalho, Minha conta e Usuários */
+.session { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.session-name { font-weight: 600; }
+.session a { text-decoration: none; }
+.session a[aria-current="page"] { font-weight: 600; }
+.account { display: flex; flex-direction: column; gap: 12px; max-width: 920px; }
+.account h2 { font-size: 15px; margin: 0 0 8px; }
+.form-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.form-row input { min-width: 220px; }
+.msg { margin: 8px 0 0; min-height: 1.2em; }
+.msg.ok { color: var(--ok); }
+.msg.err { color: var(--err); }
+.status .ok, .status .bad { margin-right: 4px; }
+.link-box { display: flex; gap: 8px; margin-top: 10px; }
+.link-box input { flex: 1; min-width: 0; }
+.row-actions { display: flex; gap: 12px; }

@@ -8,6 +8,8 @@
 //  - user: { email, name, role } do usuário logado (padrão ana@x.com).
 //  - scheduler: agendador falso; vira autoRunner.schedulerFor(userId) => scheduler
 //    (ou passe `autoRunner` direto).
+//  - contexts: fábrica de contexto real (substitui a falsa); makeJiraClient, validateAnthropicKey
+//    e oauth são repassados ao createApp. `contexts` aqui é (db, users) => fábrica.
 // Devolve { base, json, cookie, login, db, users, sessions, audit, user }.
 //  - json(method, path, body, headers) envia o cookie da sessão.
 //  - login(dados) cria outro usuário + sessão e devolve { user, cookie, json }.
@@ -23,13 +25,13 @@ import { createRateLimiter } from '../../src/auth/rateLimit.js';
 const servers = [];
 after(() => servers.forEach((s) => { s.closeAllConnections?.(); s.close(); }));
 
-export async function makeTestApp({ services = {}, user = {}, scheduler, autoRunner, holidayProvider, config = {} } = {}) {
+export async function makeTestApp({ services = {}, user = {}, scheduler, autoRunner, holidayProvider, config = {}, contexts: realContexts, makeJiraClient, validateAnthropicKey, oauth } = {}) {
   const db = openDb(':memory:');
   const users = createUserRepo(db, randomBytes(32));
   const sessions = createSessionRepo(db);
   const audit = createAuditRepo(db);
   const limiter = createRateLimiter({ max: 5, windowMs: 15 * 60 * 1000 });
-  const contexts = {
+  const contexts = realContexts?.(db, users) ?? {
     forUser(u) {
       const ctx = typeof services === 'function' ? services(u) : services;
       if (ctx.missing) return { missing: true };
@@ -41,6 +43,7 @@ export async function makeTestApp({ services = {}, user = {}, scheduler, autoRun
   const app = createApp({
     config: { baseUrl: 'https://x.atlassian.net', ...config },
     db, users, sessions, contexts, audit, holidayProvider, autoRunner: runner, limiter,
+    makeJiraClient, validateAnthropicKey, oauth,
   });
   const server = await new Promise((r) => { const s = app.listen(0, () => r(s)); });
   servers.push(server);
@@ -57,5 +60,5 @@ export async function makeTestApp({ services = {}, user = {}, scheduler, autoRun
     return { user: u, cookie, json: requester(cookie) };
   }
   const main = login({ email: 'ana@x.com', name: 'Ana', role: 'admin', ...user });
-  return { base, json: main.json, cookie: main.cookie, user: main.user, login, db, users, sessions, audit };
+  return { base, json: main.json, cookie: main.cookie, user: main.user, login, db, users, sessions, audit, contexts, requester };
 }

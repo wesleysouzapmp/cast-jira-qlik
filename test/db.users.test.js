@@ -47,7 +47,7 @@ test('segredos ficam cifrados no banco e voltam decifrados', () => {
   const s = users.getSecrets(u.id);
   assert.deepEqual(s, {
     jiraEmail: 'j@x.com', jiraToken: 'JIRA-TOKEN-SECRETO', anthropicKey: 'sk-ant-SECRETA',
-    tokenStatus: 'ok', accountId: 'acc1',
+    tokenStatus: 'ok', accountId: 'acc1', checkedAt: 1000000,
   });
   users.setAnthropic(u.id, null);
   assert.equal(users.getSecrets(u.id).anthropicKey, null);

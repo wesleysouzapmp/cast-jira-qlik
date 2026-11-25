@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Minha conta</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Minha conta</div>
+    <nav class="pages" aria-label="Páginas">
+      <a href="index.html">API Tester</a>
+      <a href="apoio.html">Tarefas de apoio</a>
+      <a href="apontar.html">Apontar horas</a>
+    </nav>
+  </header>
+
+  <main class="page account">
+    <section class="panel">
+      <h1 id="nome">…</h1>
+      <p class="muted" id="emailConta"></p>
+    </section>
+
+    <section class="panel">
+      <h2>Token do Jira</h2>
+      <p id="jiraStatus" class="status"></p>
+      <p class="muted">
+        Crie um API token em
+        <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener">id.atlassian.com → Segurança → API tokens</a>
+        e informe aqui o e-mail da sua conta Atlassian. O token é conferido no Jira antes de ser salvo e nunca é mostrado de volta.
+      </p>
+      <form id="jiraForm" class="form-row" autocomplete="off">
+        <label>E-mail do Jira
+          <input id="jiraEmail" name="email" type="email" required>
+        </label>
+        <label>API token
+          <input id="jiraToken" name="token" type="password" autocomplete="off" required>
+        </label>
+        <button class="primary" type="submit">Salvar token</button>
+      </form>
+      <p id="jiraMsg" class="msg" role="status"></p>
+    </section>
+
+    <section class="panel">
+      <h2>Chave da Anthropic (opcional)</h2>
+      <p id="aiStatus" class="status"></p>
+      <p class="muted">Usada para sugerir comentários de apontamento. A chave é conferida antes de ser salva.</p>
+      <form id="aiForm" class="form-row" autocomplete="off">
+        <label>Chave
+          <input id="aiKey" name="key" type="password" autocomplete="off" required>
+        </label>
+        <button class="primary" type="submit">Salvar chave</button>
+        <button type="button" id="aiRemove">Remover chave</button>
+      </form>
+      <p id="aiMsg" class="msg" role="status"></p>
+    </section>
+
+    <section class="panel">
+      <h2>Senha</h2>
+      <form id="senhaForm" class="form-row">
+        <label>Senha atual
+          <input id="senhaAtual" name="atual" type="password" autocomplete="current-password" required>
+        </label>
+        <label>Nova senha (mínimo 10 caracteres)
+          <input id="senhaNova" name="nova" type="password" autocomplete="new-password" minlength="10" required>
+        </label>
+        <button class="primary" type="submit">Trocar senha</button>
+      </form>
+      <p class="muted">Ao trocar a senha, as suas outras sessões são encerradas.</p>
+      <p id="senhaMsg" class="msg" role="status"></p>
+    </section>
+
+    <section class="panel">
+      <h2>Sessões abertas</h2>
+      <table class="small">
+        <thead><tr><th>Navegador</th><th>Desde</th><th>Expira</th><th></th></tr></thead>
+        <tbody id="sessoes"></tbody>
+      </table>
+      <div class="actions">
+        <button type="button" id="encerrar">Encerrar as outras sessões</button>
+      </div>
+      <p id="sessoesMsg" class="msg" role="status"></p>
+    </section>
+  </main>
+  <script src="session.js"></script>
+  <script type="module" src="conta.js"></script>
+</body>
+</html>

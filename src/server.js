@@ -6,6 +6,9 @@ import { JiraError } from './support/service.js';
 import { ConflictError, ScopeError } from './worklog/service.js';
 import { AiError } from './worklog/ai.js';
 import { registerAuth } from './web/auth.js';
+import { registerAccount, defaultValidateAnthropicKey } from './web/account.js';
+import { registerAdmin } from './web/admin.js';
+import { createJiraClient } from './jiraClient.js';
 import { createAuditRepo } from './db/audit.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../public', import.meta.url));
@@ -317,7 +320,12 @@ function registerAutoRoutes(app, { autoRunner, audit }) {
 // Dependências obrigatórias: config, users, sessions, contexts e limiter (a autenticação é
 // sempre registrada). `audit` é opcional: se ausente e houver `db`, é criado a partir dele.
 // holidayProvider e autoRunner são opcionais (sem eles, /api/holidays e /api/auto* não existem).
-export function createApp({ config, db, users, sessions, contexts, holidayProvider, autoRunner, limiter, now, audit }) {
+// makeJiraClient e validateAnthropicKey (validação de credenciais em Minha conta) têm padrão
+// real; os testes injetam falsos. `oauth` é opcional: se tiver revokeFor, é chamado ao desativar.
+export function createApp({
+  config, db, users, sessions, contexts, holidayProvider, autoRunner, limiter, now, audit,
+  makeJiraClient = createJiraClient, validateAnthropicKey = defaultValidateAnthropicKey, oauth,
+}) {
   if (!users || !sessions || !contexts || !limiter) throw new Error('createApp: users, sessions, contexts e limiter são obrigatórios.');
   audit ??= db ? createAuditRepo(db, now) : null;
   const app = express();
@@ -367,6 +375,9 @@ export function createApp({ config, db, users, sessions, contexts, holidayProvid
   });
 
   app.get('/api/catalog', (_req, res) => res.json(CATALOG));
+
+  registerAccount(app, { users, sessions, contexts, config, audit, limiter, makeJiraClient, validateAnthropicKey });
+  registerAdmin(app, { users, sessions, contexts, config, audit, oauth });
 
   function guard(handler) {
     return async (req, res) => {

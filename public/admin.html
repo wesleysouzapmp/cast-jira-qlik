@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Usuários</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Usuários</div>
+    <nav class="pages" aria-label="Páginas">
+      <a href="index.html">API Tester</a>
+      <a href="apoio.html">Tarefas de apoio</a>
+      <a href="apontar.html">Apontar horas</a>
+    </nav>
+  </header>
+
+  <main class="page account">
+    <section class="panel">
+      <h2>Convidar pessoa</h2>
+      <p class="muted">Gere um link de convite (vale 7 dias, uso único) e envie para a pessoa.</p>
+      <form id="conviteForm" class="form-row">
+        <label>Papel
+          <select id="papel" name="role">
+            <option value="user">Usuário</option>
+            <option value="admin">Administrador</option>
+          </select>
+        </label>
+        <button class="primary" type="submit">Gerar convite</button>
+      </form>
+      <div id="linkBox" class="link-box" hidden>
+        <input id="link" type="text" readonly aria-label="Link gerado">
+        <button type="button" id="copiar">copiar</button>
+      </div>
+      <p id="linkInfo" class="muted"></p>
+      <p id="msg" class="msg" role="status"></p>
+    </section>
+
+    <section class="panel">
+      <h2>Pessoas cadastradas</h2>
+      <div class="scroll-x">
+        <table class="small">
+          <thead><tr><th>Nome</th><th>E-mail</th><th>Papel</th><th>Token do Jira</th><th>Situação</th><th>Ações</th></tr></thead>
+          <tbody id="usuarios"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <script src="session.js"></script>
+  <script type="module" src="admin.js"></script>
+</body>
+</html>

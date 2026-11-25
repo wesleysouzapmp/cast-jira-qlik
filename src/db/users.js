@@ -54,7 +54,7 @@ export function createUserRepo(db, masterKey, now = () => Date.now()) {
 
     getSecrets(id) {
       const r = q.secrets.get(id);
-      const vazio = { jiraEmail: null, jiraToken: null, anthropicKey: null, tokenStatus: 'missing', accountId: null };
+      const vazio = { jiraEmail: null, jiraToken: null, anthropicKey: null, tokenStatus: 'missing', accountId: null, checkedAt: null };
       if (!r) return vazio;
       try {
         return {
@@ -63,10 +63,11 @@ export function createUserRepo(db, masterKey, now = () => Date.now()) {
           anthropicKey: r.anthropic_key_enc ? decrypt(r.anthropic_key_enc, masterKey) : null,
           tokenStatus: r.token_status,
           accountId: r.jira_account_id,
+          checkedAt: r.checked_at ?? null,
         };
       } catch {
         // Chave mestra diferente / dado corrompido: trata como ausente, sem vazar nada.
-        return { ...vazio, jiraEmail: r.jira_email, accountId: r.jira_account_id };
+        return { ...vazio, jiraEmail: r.jira_email, accountId: r.jira_account_id, checkedAt: r.checked_at ?? null };
       }
     },
     setJira(id, { email, token, accountId }) {
