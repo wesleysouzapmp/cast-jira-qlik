@@ -7,9 +7,13 @@ const MIN_PASSWORD = 10;
 const GENERIC_LOGIN_ERROR = 'E-mail ou senha inválidos.';
 
 const PUBLIC_PATHS = new Set(['/login.html', '/login.js', '/convite.html', '/convite.js', '/style.css']);
-const PUBLIC_PREFIXES = ['/api/login', '/api/convite/', '/api/redefinir/'];
+const PUBLIC_EXACT = new Set(['/api/login']);
+const PUBLIC_PREFIXES = ['/api/convite/', '/api/redefinir/'];
+const REFRESH_AFTER_MS = 24 * 3600 * 1000;
+// Calculado uma vez: o scrypt do e-mail desconhecido tem o mesmo custo do de um usuário real.
+const DUMMY_HASH = await hashPassword('dummy-password-for-timing');
 
-const isPublic = (path) => PUBLIC_PATHS.has(path) || PUBLIC_PREFIXES.some((p) => path === p || path.startsWith(p));
+const isPublic = (path) => PUBLIC_PATHS.has(path) || PUBLIC_EXACT.has(path) || PUBLIC_PREFIXES.some((p) => path.startsWith(p));
 
 function parseCookies(header) {
   const out = {};
@@ -26,9 +30,9 @@ const clientIp = (req) => req.socket?.remoteAddress ?? 'unknown';
 
 // Registra as rotas de autenticação e devolve o middleware requireUser.
 // Ordem esperada pelo chamador: express.json() antes; requireUser depois das rotas públicas.
-export function registerAuth(app, { users, sessions, limiter, config = {} }) {
+export function registerAuth(app, { users, sessions, limiter, config = {}, now = () => Date.now() }) {
   const secure = Boolean(config.publicHost);
-  let dummyHash = null;
+  const lastRefresh = new Map(); // token -> instante do último Set-Cookie reenviado
 
   function setCookie(res, token) {
     const attrs = [`${COOKIE_NAME}=${token}`, 'HttpOnly', 'SameSite=Lax', 'Path=/', `Max-Age=${COOKIE_MAX_AGE_S}`];
@@ -42,11 +46,19 @@ export function registerAuth(app, { users, sessions, limiter, config = {} }) {
   }
 
   // Anexa req.user (sem passwordHash) e req.sessionToken quando o cookie é válido.
-  app.use((req, _res, next) => {
+  app.use((req, res, next) => {
     const token = parseCookies(req.headers.cookie)[COOKIE_NAME];
     if (token) {
       const found = sessions.resolve(token);
-      if (found) { req.user = publicUser(found.user); req.sessionToken = token; }
+      if (found) {
+        req.user = publicUser(found.user);
+        req.sessionToken = token;
+        // Cookie renovado no uso: reenvia Max-Age de 30 dias no máximo 1x por dia por sessão.
+        const t = now();
+        const last = lastRefresh.get(token);
+        if (last === undefined) lastRefresh.set(token, t);
+        else if (t - last >= REFRESH_AFTER_MS) { setCookie(res, token); lastRefresh.set(token, t); }
+      }
     }
     next();
   });
@@ -73,8 +85,7 @@ export function registerAuth(app, { users, sessions, limiter, config = {} }) {
     if (!limiter.hit(key)) return bad(res, 'Muitas tentativas. Aguarde alguns minutos.', 429);
     const user = email ? users.byEmail(email) : null;
     // Roda o scrypt mesmo para e-mail desconhecido, para o tempo não revelar se a conta existe.
-    dummyHash ??= await hashPassword('dummy-password-for-timing');
-    const ok = await verifyPassword(senha, user ? user.passwordHash : dummyHash);
+    const ok = await verifyPassword(senha, user ? user.passwordHash : DUMMY_HASH);
     if (!user || !ok || !user.active) return bad(res, GENERIC_LOGIN_ERROR, 401);
     limiter.reset(key);
     startSession(req, res, user.id);
@@ -82,7 +93,7 @@ export function registerAuth(app, { users, sessions, limiter, config = {} }) {
   }));
 
   app.post('/api/logout', wrap(async (req, res) => {
-    if (req.sessionToken) sessions.destroy(req.sessionToken);
+    if (req.sessionToken) { sessions.destroy(req.sessionToken); lastRefresh.delete(req.sessionToken); }
     clearCookie(res);
     res.json({ ok: true });
   }));
@@ -133,9 +144,10 @@ export function registerAuth(app, { users, sessions, limiter, config = {} }) {
   }));
 
   return function requireUser(req, res, next) {
-    if (req.user || isPublic(req.path)) return next();
-    if (req.path.startsWith('/api/')) return bad(res, 'Faça login para continuar.', 401);
-    if (req.path === '/' || req.path.endsWith('.html')) {
+    const path = req.path.toLowerCase();
+    if (req.user || isPublic(path)) return next();
+    if (path.startsWith('/api/') || path === '/api') return bad(res, 'Faça login para continuar.', 401);
+    if (path === '/' || path.endsWith('.html')) {
       return res.redirect(302, `/login.html?next=${encodeURIComponent(req.originalUrl)}`);
     }
     next();

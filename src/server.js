@@ -264,8 +264,9 @@ function registerAutoRoutes(app, { scheduler, config }) {
   app.post('/api/auto/run', handle(async () => ({ results: await scheduler.tick() })));
 }
 
-export function createApp({ client, config, supportService, worklogService, holidayProvider, favoritesStore, autoScheduler, users, sessions, limiter }) {
+export function createApp({ client, config, supportService, worklogService, holidayProvider, favoritesStore, autoScheduler, users, sessions, limiter, now }) {
   const app = express();
+  app.set('case sensitive routing', true);
   const stripPort = (h) => String(h ?? '').replace(/:\d+$/, '').toLowerCase();
   const publicHost = stripPort(config.publicHost);
 
@@ -299,7 +300,7 @@ export function createApp({ client, config, supportService, worklogService, holi
   app.use(express.json({ limit: '1mb' }));
 
   if (users && sessions) {
-    const requireUser = registerAuth(app, { users, sessions, limiter, config });
+    const requireUser = registerAuth(app, { users, sessions, limiter, config, now });
     app.use(requireUser);
   }
 
@@ -361,6 +362,14 @@ export function createApp({ client, config, supportService, worklogService, holi
   app.get('/lib/time.js', (_req, res) => res.type('application/javascript').sendFile(WORKLOG_TIME));
   app.use('/lib', express.static(SHARED_DIR));
   app.use(express.static(PUBLIC_DIR));
+  // JSON malformado etc.: resposta JSON (com os cabeçalhos de segurança já definidos).
+  app.use((err, _req, res, next) => {
+    if (res.headersSent) return next(err);
+    const status = err.status ?? err.statusCode;
+    if (status >= 400 && status < 500) return res.status(status).json({ error: 'Requisição inválida.' });
+    console.error('[erro interno]', err?.message);
+    res.status(500).json({ error: 'Erro interno no servidor do app.' });
+  });
   // 404 próprio: o handler padrão do Express sobrescreve o Content-Security-Policy.
   app.use((req, res) => res.status(404).type('text/plain').send(`Cannot ${req.method} ${req.path}`));
   return app;

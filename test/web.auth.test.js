@@ -1,6 +1,9 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { readdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { createApp } from '../src/server.js';
 import { openDb } from '../src/db/index.js';
@@ -14,14 +17,14 @@ after(() => servers.forEach((s) => s.close()));
 
 const SENHA = 'senha-bem-longa-1';
 
-async function start({ publicHost } = {}) {
+async function start({ publicHost, clock } = {}) {
   const db = openDb(':memory:');
   const users = createUserRepo(db, randomBytes(32));
-  const sessions = createSessionRepo(db);
+  const sessions = createSessionRepo(db, clock?.now);
   const limiter = createRateLimiter({ max: 5, windowMs: 15 * 60 * 1000 });
   const config = { baseUrl: 'https://x.atlassian.net', email: 'e@x', tokenConfigured: true, ...(publicHost ? { publicHost } : {}) };
   const worklogService = { async listTasks() { return []; } };
-  const app = createApp({ client: { async call() { return {}; } }, config, worklogService, users, sessions, limiter });
+  const app = createApp({ client: { async call() { return {}; } }, config, worklogService, users, sessions, limiter, now: clock?.now });
   const server = await new Promise((r) => { const s = app.listen(0, () => r(s)); });
   servers.push(server);
   const port = server.address().port;
@@ -202,4 +205,56 @@ test('createApp sem auth continua igual (sem 401, sem rotas de login)', async ()
   const base = `http://127.0.0.1:${server.address().port}`;
   assert.equal((await fetch(base + '/api/catalog')).status, 200);
   assert.equal((await fetch(base + '/api/me')).status, 404);
+});
+
+test('caminhos com caixa diferente não escapam do requireUser', async () => {
+  const { base } = await start();
+  for (const p of ['/API/worklog/tasks', '/Api/config', '/api/Config']) {
+    const res = await fetch(base + p);
+    assert.ok(res.status === 401 || res.status === 404, `${p} -> ${res.status}`);
+  }
+  for (const p of ['/Apontar.HTML', '/INDEX.html']) {
+    const res = await fetch(base + p, { redirect: 'manual' });
+    assert.ok([302, 404].includes(res.status), `${p} -> ${res.status}`);
+  }
+});
+
+test('rota pública é exata: /api/loginX exige sessão', async () => {
+  const { base, post } = await start();
+  assert.equal((await post('/api/loginX', {})).status, 401);
+  assert.equal((await fetch(base + '/login.html.map')).status, 404);
+});
+
+test('JSON malformado dá 400 JSON com cabeçalhos de segurança', async () => {
+  const { base } = await start();
+  const res = await fetch(base + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{oops' });
+  assert.equal(res.status, 400);
+  assert.match(res.headers.get('content-type'), /json/);
+  assert.equal(res.headers.get('content-security-policy'), "default-src 'self'");
+});
+
+test('cookie é renovado no uso, no máximo uma vez por dia', async () => {
+  let t = 1_000_000;
+  const clock = { now: () => t };
+  const { base, post } = await start({ clock });
+  const cookie = cookieOf(await post('/api/login', { email: 'ana@x.com', senha: SENHA }));
+  const get = () => fetch(base + '/api/me', { headers: { cookie } });
+  assert.equal((await get()).headers.get('set-cookie'), null);
+  t += 2 * 3600_000;
+  assert.equal((await get()).headers.get('set-cookie'), null);
+  t += 25 * 3600_000;
+  const sc = (await get()).headers.get('set-cookie');
+  assert.ok(sc.startsWith(cookie + ';'));
+  assert.match(sc, /HttpOnly/);
+  assert.match(sc, /SameSite=Lax/);
+  assert.match(sc, /Max-Age=2592000/);
+  assert.equal((await get()).headers.get('set-cookie'), null);
+});
+
+test('todos os public/*.js têm sintaxe válida', () => {
+  const dir = fileURLToPath(new URL('../public/', import.meta.url));
+  for (const f of readdirSync(dir).filter((n) => n.endsWith('.js'))) {
+    const r = spawnSync(process.execPath, ['--check', dir + f], { encoding: 'utf8' });
+    assert.equal(r.status, 0, `${f}: ${r.stderr}`);
+  }
 });

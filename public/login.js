@@ -2,10 +2,16 @@ const form = document.getElementById('form');
 const msg = document.getElementById('msg');
 const botao = document.getElementById('enviar');
 
-// Só aceita caminhos internos em ?next= (evita redirecionamento para outro site).
+// Só aceita destinos do mesmo site em ?next= (evita redirecionamento aberto).
 function destino() {
   const next = new URLSearchParams(location.search).get('next');
-  return next && next.startsWith('/') && !next.startsWith('//') && !next.startsWith('/\') ? next : '/index.html';
+  if (!next) return '/index.html';
+  try {
+    const u = new URL(next, location.origin);
+    return u.origin === location.origin ? u.pathname + u.search + u.hash : '/index.html';
+  } catch {
+    return '/index.html';
+  }
 }
 
 form.addEventListener('submit', async (ev) => {
