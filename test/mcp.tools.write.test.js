@@ -17,12 +17,16 @@ const T0 = Date.parse('2026-11-25T13:00:00.000Z');
 const WRITE_TOOLS = ['confirmar_previa', 'apontar', 'alterar_apontamento', 'apagar_apontamento', 'criar_regra', 'alterar_regra', 'pausar_regra', 'excluir_regra'];
 const loose = (key, summary) => ({ key, fields: { summary, issuetype: { name: 'Tarefa', hierarchyLevel: 0 }, status: { name: 'Aberto' }, project: { key: key.split('-')[0] } } });
 
+// LOOSE-1..10: tarefas avulsas para montar uma prévia com mais de 200 batidas.
+const LOOSE = Array.from({ length: 10 }, (_, i) => `LOOSE-${i + 1}`);
+
 function jiraCtx() {
   const jira = createFakeJira({
     issues: [
       epicIssue('BI-1', 'Aberto'),
       taskIssue('QSENSE-1', 'BI-1', 'analise', 'Aberto'),
       loose('SIJUD-1', 'Atendimento SIJUD'),
+      ...LOOSE.map((k) => loose(k, `Avulsa ${k}`)),
     ],
     worklogs: {
       'SIJUD-1': [
@@ -55,7 +59,7 @@ function fakeScheduler() {
   };
 }
 
-async function setup() {
+async function setup({ previews } = {}) {
   const { jira, ctx } = jiraCtx();
   const sched = fakeScheduler();
   const seenUsers = [];
@@ -63,7 +67,7 @@ async function setup() {
   const t = await makeTestApp({
     services: () => ctx,
     autoRunner: { schedulerFor: (id) => { seenUsers.push(id); return sched; } },
-    mcp: { serverDeps: { now: () => clock.now } },
+    mcp: { serverDeps: { now: () => clock.now, ...(previews ? { previews } : {}) } },
   });
   t.oauth.saveClient({ client_id: 'cli-1', redirect_uris: ['https://claude.ai/cb'], client_name: 'Claude', token_endpoint_auth_method: 'none' });
   t.tokenFor = (userId = t.user.id) => t.oauth.issueTokens({ clientId: 'cli-1', userId, scopes: [] }).access_token;
@@ -92,6 +96,8 @@ test('previews: put/take de uso único, por usuário e com validade', () => {
   assert.match(id, /^[A-Za-z0-9_-]{16,}$/);
   assert.notEqual(store.put(1, {}), id, 'ids diferentes');
   assert.equal(store.take(2, id), null, 'outro usuário');
+  assert.equal(store.get(2, id), null, 'get de outro usuário');
+  assert.deepEqual(store.get(1, id), { entries: [1] }, 'get não consome');
   assert.deepEqual(store.take(1, id), { entries: [1] }, 'outro usuário não consome');
   assert.equal(store.take(1, id), null, 'uso único');
   const velho = store.put(1, { x: 1 });
@@ -208,9 +214,12 @@ test('gerar_previa valida entrada: horas, período e índice de comentário', as
   const ruim = await call(client, 'gerar_previa', { itens: [{ tarefa: 'QSENSE-1', horas: 'muito' }], de: '2026-11-26', ate: '2026-11-26' });
   assert.equal(ruim.isError, true);
   assert.match(ruim.content[0].text, /Horas inválidas/);
-  const longo = await call(client, 'gerar_previa', { itens: [{ tarefa: 'QSENSE-1', horas: '1h' }], de: '2026-09-01', ate: '2026-11-26' });
-  assert.equal(longo.isError, true);
-  assert.match(longo.content[0].text, /62 dias/);
+  const longo = await call(client, 'gerar_previa', { itens: [{ tarefa: 'QSENSE-1', horas: '1h' }], de: '2026-11-01', ate: '2026-12-02' });
+  assert.equal(longo.isError, true, '32 dias');
+  assert.match(longo.content[0].text, /no máximo 31 dias/);
+  const quebrado = await call(client, 'gerar_previa', { itens: [{ tarefa: 'QSENSE-1', horas: '1h 10m' }], de: '2026-11-26', ate: '2026-11-26' });
+  assert.equal(quebrado.isError, true);
+  assert.match(quebrado.content[0].text, /blocos de 15 min, ex\.: 1h 15m/);
   const epico = await call(client, 'gerar_previa', { itens: [{ tarefa: 'BI-1', horas: '1h' }], de: '2026-11-26', ate: '2026-11-26' });
   assert.equal(epico.isError, true);
   assert.match(epico.content[0].text, /épico/);
@@ -223,6 +232,10 @@ test('gerar_previa valida entrada: horas, período e índice de comentário', as
   assert.equal(idx.isError, true);
   assert.match(idx.content[0].text, /índice 5/i);
   assert.equal(writes(t.jira).length, 0);
+  // O índice errado não descarta a prévia: o mesmo previa_id ainda confirma.
+  const ok2 = await call(client, 'confirmar_previa', { previa_id: p.previa_id, comentarios: [{ indice: 1, texto: 'Corrigido' }] });
+  assert.ok(!ok2.isError, ok2.content[0].text);
+  assert.equal(parse(ok2).gravadas, 1);
   await client.close();
 });
 
@@ -243,14 +256,19 @@ test('apontar grava uma batida; com sobreposição dá conflito sem gravar; épi
   assert.equal(ruim.isError, true);
   assert.match(ruim.content[0].text, /múltiplo de 15/);
 
-  const r = await call(client, 'apontar', { tarefa: 'SIJUD-1', data: '2026-11-05', inicio: '09:00', duracao: '1h 30m', comentario: 'Suporte ao usuário' });
+  const dez = await call(client, 'apontar', { tarefa: 'SIJUD-1', data: '2026-11-05', inicio: '09:00', duracao: '1h 10m' });
+  assert.equal(dez.isError, true, '1h 10m não vira 1h 15m em silêncio');
+  assert.match(dez.content[0].text, /blocos de 15 min, ex\.: 1h 15m/);
+  assert.equal(writes(t.jira).length, 0);
+
+  const r = await call(client, 'apontar', { tarefa: 'SIJUD-1', data: '2026-11-05', inicio: '09:00', duracao: '1h 15m', comentario: 'Suporte ao usuário' });
   assert.ok(!r.isError, r.content[0].text);
   const out = parse(r);
   assert.equal(out.status, 'created');
   assert.ok(out.worklogId);
   const w = t.jira.worklogs['SIJUD-1'].find((x) => x.id === String(out.worklogId));
   assert.equal(w.started, '2026-11-05T09:00:00.000-0300');
-  assert.equal(w.timeSpentSeconds, 5400);
+  assert.equal(w.timeSpentSeconds, 4500);
   const audit = mcpAudit(t);
   assert.equal(audit.length, 1);
   assert.equal(audit[0].action, 'apontar');
@@ -269,6 +287,11 @@ test('alterar_apontamento e apagar_apontamento: só batidas do próprio usuário
   assert.equal(alheio2.isError, true);
   assert.equal(writes(t.jira).length, 0);
   assert.ok(t.jira.worklogs['SIJUD-1'].some((w) => w.id === '9'));
+
+  const dez = await call(client, 'alterar_apontamento', { id: '7', duracao: '1h 10m' });
+  assert.equal(dez.isError, true);
+  assert.match(dez.content[0].text, /blocos de 15 min/);
+  assert.equal(writes(t.jira).length, 0);
 
   const alt = await call(client, 'alterar_apontamento', { id: '7', inicio: '14:00', comentario: 'Ajustado' });
   assert.ok(!alt.isError, alt.content[0].text);
@@ -316,5 +339,23 @@ test('regras: criar, alterar (parcial), pausar uma, excluir — sempre no agenda
 
   assert.ok(t.seenUsers.length > 0 && t.seenUsers.every((id) => id === t.user.id));
   assert.deepEqual(mcpAudit(t).map((x) => x.action).sort(), ['alterar_regra', 'criar_regra', 'excluir_regra', 'pausar_regra']);
+  await client.close();
+});
+
+test('gerar_previa com mais de 200 batidas → isError, nada guardado', async () => {
+  const real = createPreviewStore({ now: () => T0 });
+  let puts = 0;
+  const previews = { ttlMs: real.ttlMs, get: real.get, take: real.take, put: (...a) => { puts++; return real.put(...a); } };
+  const t = await setup({ previews });
+  const client = await connect(t);
+  // 10 tarefas × 15 min por dia × 21 dias úteis de novembro/2026 = 210 batidas.
+  const r = await call(client, 'gerar_previa', { itens: LOOSE.map((k) => ({ tarefa: k, horas: '15m', por_dia: true })), de: '2026-11-01', ate: '2026-11-30' });
+  assert.equal(r.isError, true, r.content[0].text);
+  assert.match(r.content[0].text, /210 batidas \(máximo 200/);
+  assert.equal(puts, 0);
+  // Dentro do limite, a mesma loja é usada.
+  const ok = await call(client, 'gerar_previa', { itens: [{ tarefa: 'LOOSE-1', horas: '15m', por_dia: true }], de: '2026-11-01', ate: '2026-11-30' });
+  assert.ok(!ok.isError, ok.content[0].text);
+  assert.equal(puts, 1);
   await client.close();
 });

@@ -27,6 +27,9 @@ const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const HHMM_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const WORKLOG_ID_RE = /^\d{1,20}$/;
 const MAX_DAYS = 62;
+// Mesmos limites da tela Apontar horas (server.js): prévia de até 31 dias e até 200 batidas por envio.
+const MAX_PREVIEW_DAYS = 31;
+const MAX_ENTRIES = 200;
 const MAX_ITEMS = 100;
 const MAX_COMMENT = 1000;
 // Janela em que um id de batida é procurado entre os apontamentos do usuário (a partir de hoje).
@@ -48,12 +51,12 @@ function checkDate(s, what) {
   return s;
 }
 
-function checkRange(de, ate) {
+function checkRange(de, ate, maxDays = MAX_DAYS) {
   checkDate(de, 'Data inicial (de)');
   checkDate(ate, 'Data final (ate)');
   const days = (Date.parse(`${ate}T00:00:00Z`) - Date.parse(`${de}T00:00:00Z`)) / 86400000 + 1;
   if (days < 1) throw new ToolError('A data final (ate) deve ser igual ou posterior à inicial (de).');
-  if (days > MAX_DAYS) throw new ToolError(`Período de no máximo ${MAX_DAYS} dias; divida a consulta em partes menores.`);
+  if (days > maxDays) throw new ToolError(`Período de no máximo ${maxDays} dias; divida a consulta em partes menores.`);
   return { from: de, to: ate };
 }
 
@@ -68,10 +71,30 @@ function checkKey(s, what = 'Chave de tarefa') {
   return key;
 }
 
+// Minutos exatos de uma duração em texto, sem arredondar (mesmos formatos de parseDuration:
+// "1:30", "1,5", "2h", "1h 30m", "45m"/"45min"); null se o formato não for reconhecido.
+function rawMinutes(text) {
+  if (typeof text !== 'string') return null;
+  const s = text.trim().toLowerCase();
+  let m;
+  if ((m = s.match(/^(\d+):([0-5]\d)$/))) return Number(m[1]) * 60 + Number(m[2]);
+  if ((m = s.match(/^(\d+(?:[.,]\d+)?)$/))) return Number(m[1].replace(',', '.')) * 60;
+  if ((m = s.match(/^(?:(\d+)\s*h)?\s*(?:(\d+)\s*m(?:in)?)?$/)) && (m[1] || m[2])) return Number(m[1] ?? 0) * 60 + Number(m[2] ?? 0);
+  return null;
+}
+
+// Duração em blocos exatos de 15 min (como a tela: nada é arredondado em silêncio) ou ToolError.
+function checkBlocks(text, what) {
+  const m = rawMinutes(text);
+  if (m === null) throw new ToolError(`${what} inválida: use, ex.: "2h", "1h 15m", "45m".`);
+  if (!Number.isInteger(m) || m % 15) throw new ToolError(`${what} inválida ("${text}"): use blocos de 15 min, ex.: 1h 15m.`);
+  return m;
+}
+
 // Duração em texto ("2h", "1h 30m", "90m", "1,5") → minutos em blocos de 15, dentro de [min, max].
 function checkDuration(text, what, { min = 15, max = 480 } = {}) {
-  const m = typeof text === 'string' ? parseDuration(text) : null;
-  if (m === null || m < min || m > max) {
+  const m = checkBlocks(text, what);
+  if (m < min || m > max) {
     throw new ToolError(`${what} inválida: use blocos de 15 min entre ${fmtMin(min)} e ${fmtMin(max)} (ex.: "2h", "1h 30m", "45m").`);
   }
   return m;
@@ -106,14 +129,15 @@ export function registerTools(server, { user, ctx, holidays, autoRunner, publicU
   }
 
   // Envolve o handler: ToolError e erros do Jira viram isError; o resto, mensagem genérica.
-  const handler = (fn) => async (args) => {
+  // write: erros do Jira falam em "gravação" em vez de "consulta".
+  const handler = (fn, { write = false } = {}) => async (args) => {
     try {
       return ok(await fn(args ?? {}));
     } catch (err) {
       if (err instanceof ToolError || err instanceof ScopeError || err instanceof ConflictError || err instanceof RangeError) return fail(err.message);
       if (err instanceof JiraError) {
         if (err.status === 401) return fail(`Seu token do Jira está inválido; atualize em Minha conta: ${conta}`);
-        return fail(`O Jira recusou a consulta: ${err.message}. Tente de novo em instantes.`);
+        return fail(`O Jira recusou a ${write ? 'gravação' : 'consulta'}: ${err.message}. Tente de novo em instantes.`);
       }
       console.error('[mcp tool]', err?.message);
       return fail('Erro interno no servidor do app. Tente de novo; se persistir, avise o administrador.');
@@ -279,6 +303,7 @@ const transOut = (list) => list.map((t) => ({
 }));
 
 function registerWriteTools({ server, user, jira, handler, record, previews, autoRunner, now, today }) {
+  const writeHandler = (fn) => handler(fn, { write: true });
   const ttlMs = previews?.ttlMs ?? 30 * 60e3;
   const ttlMin = Math.round(ttlMs / 60e3);
 
@@ -302,7 +327,7 @@ function registerWriteTools({ server, user, jira, handler, record, previews, aut
 
   server.registerTool('gerar_previa', {
     title: 'Gerar prévia de apontamentos',
-    description: 'Distribui as horas pedidas por tarefa nos dias úteis de de a ate (AAAA-MM-DD, até 62 dias, '
+    description: 'Distribui as horas pedidas por tarefa nos dias úteis de de a ate (AAAA-MM-DD, até 31 dias e 200 batidas, '
       + 'fuso -03:00), sem sobrepor os seus apontamentos, respeitando expediente, limite diário e feriados. '
       + 'Não grava nada: devolve as batidas numeradas (indice, tarefa, data, inicio HH:MM, minutos, comentário '
       + 'sugerido), as horas que não couberam (faltantes), as transições de status previstas e um previa_id '
@@ -328,12 +353,15 @@ function registerWriteTools({ server, user, jira, handler, record, previews, aut
     },
     annotations: READ_ONLY,
   }, handler(async ({ itens, de, ate, expediente }) => {
-    const { from, to } = checkRange(de, ate);
+    const { from, to } = checkRange(de, ate, MAX_PREVIEW_DAYS);
     if (!Array.isArray(itens) || itens.length === 0 || itens.length > MAX_ITEMS) throw new ToolError(`Informe de 1 a ${MAX_ITEMS} itens com tarefa e horas.`);
     const items = itens.map((i) => {
       const taskKey = checkKey(i?.tarefa);
       const max = i?.por_dia ? 480 : 200 * 60;
-      const minutes = typeof i?.horas === 'string' ? parseDuration(i.horas) : null;
+      const minutes = rawMinutes(i?.horas);
+      if (minutes !== null && (!Number.isInteger(minutes) || minutes % 15)) {
+        throw new ToolError(`Horas inválidas para ${taskKey} ("${i.horas}"): use blocos de 15 min, ex.: 1h 15m.`);
+      }
       if (minutes === null || minutes < 15 || minutes > max) {
         throw new ToolError(`Horas inválidas para ${taskKey}: use blocos de 15 min até ${fmtMin(max)}${i?.por_dia ? ' por dia' : ''} (ex.: "2h", "1h 30m", "45m").`);
       }
@@ -343,6 +371,9 @@ function registerWriteTools({ server, user, jira, handler, record, previews, aut
     if (!previews) throw new ToolError('As prévias não estão disponíveis neste servidor; tente novamente mais tarde ou use a tela Apontar horas.');
     const c = jira();
     const out = await c.worklogService.preview({ items, from, to, schedule });
+    if (out.entries.length > MAX_ENTRIES) {
+      throw new ToolError(`A prévia teria ${out.entries.length} batidas (máximo ${MAX_ENTRIES} por envio); divida o período ou as tarefas em partes menores.`);
+    }
     const entries = out.entries.map((e) => ({ taskKey: e.taskKey, date: e.date, start: e.start, minutes: e.minutes, comment: e.comment ?? '' }));
     const id = entries.length ? previews.put(user.id, { entries }) : null;
     return {
@@ -374,18 +405,24 @@ function registerWriteTools({ server, user, jira, handler, record, previews, aut
       })).max(500).optional(),
     },
     annotations: WRITES,
-  }, handler(async ({ previa_id: previaId, comentarios = [] }) => {
+  }, writeHandler(async ({ previa_id: previaId, comentarios = [] }) => {
     for (const k of comentarios) checkComment(k?.texto, `Comentário da batida ${k?.indice}`);
     const c = jira(); // antes do take: sem token, a prévia não é consumida
-    const preview = previews?.take(user.id, previaId);
-    if (!preview) throw new ToolError('Prévia não encontrada ou expirada; gere de novo com gerar_previa.');
-    const entries = preview.entries.map((e) => ({ ...e }));
+    const notFound = 'Prévia não encontrada ou expirada; gere de novo com gerar_previa.';
+    // Valida com get (sem consumir): índice errado não descarta a prévia.
+    const peek = previews?.get(user.id, previaId);
+    if (!peek) throw new ToolError(notFound);
+    const n = peek.entries.length;
+    if (n > MAX_ENTRIES) throw new ToolError(`A prévia tem ${n} batidas (máximo ${MAX_ENTRIES} por envio); gere prévias de períodos menores.`);
     for (const k of comentarios) {
-      if (!Number.isInteger(k.indice) || k.indice < 1 || k.indice > entries.length) {
-        throw new ToolError(`Comentário com índice ${k.indice} inexistente (a prévia tinha ${entries.length} batida(s)); gere a prévia de novo e use índices de 1 a ${entries.length}.`);
+      if (!Number.isInteger(k.indice) || k.indice < 1 || k.indice > n) {
+        throw new ToolError(`Comentário com índice ${k.indice} inexistente: a prévia tem ${n} batida(s); use índices de 1 a ${n} e chame confirmar_previa de novo com o mesmo previa_id.`);
       }
-      entries[k.indice - 1].comment = k.texto;
     }
+    const preview = previews.take(user.id, previaId);
+    if (!preview) throw new ToolError(notFound);
+    const entries = preview.entries.map((e) => ({ ...e }));
+    for (const k of comentarios) entries[k.indice - 1].comment = k.texto;
     const out = await c.worklogService.submit({ entries });
     const created = out.results.filter((r) => r.status === 'created');
     if (!created.length) {
@@ -420,7 +457,7 @@ function registerWriteTools({ server, user, jira, handler, record, previews, aut
       comentario: z.string().optional().describe(`Comentário (até ${MAX_COMMENT} caracteres).`),
     },
     annotations: WRITES,
-  }, handler(async ({ tarefa, data, inicio, duracao, comentario }) => {
+  }, writeHandler(async ({ tarefa, data, inicio, duracao, comentario }) => {
     const taskKey = checkKey(tarefa);
     const date = checkDate(data, 'Data');
     const start = checkHhmm(inicio, 'Início');
@@ -475,7 +512,7 @@ function registerWriteTools({ server, user, jira, handler, record, previews, aut
       comentario: z.string().optional().describe(`Novo comentário (até ${MAX_COMMENT} caracteres; "" apaga).`),
     },
     annotations: WRITES,
-  }, handler(async ({ id, tarefa, data, inicio, duracao, comentario }) => {
+  }, writeHandler(async ({ id, tarefa, data, inicio, duracao, comentario }) => {
     const fields = { tarefa, data, inicio, duracao, comentario };
     const changed = Object.keys(fields).filter((k) => fields[k] !== undefined);
     if (!changed.length) throw new ToolError('Informe ao menos um campo para alterar: tarefa, data, inicio, duracao ou comentario.');
@@ -510,7 +547,7 @@ function registerWriteTools({ server, user, jira, handler, record, previews, aut
       + 'atrás a 31 dias à frente). Apontamentos de outras pessoas não podem ser apagados.',
     inputSchema: { id: z.string().describe('Id do apontamento (meus_apontamentos).') },
     annotations: WRITES,
-  }, handler(async ({ id }) => {
+  }, writeHandler(async ({ id }) => {
     const c = jira();
     const w = await findMine(c, id);
     const out = await c.worklogService.batch({ changes: [{ id: w.id, issueKey: w.issueKey, action: 'delete' }] });
@@ -556,7 +593,7 @@ function registerWriteTools({ server, user, jira, handler, record, previews, aut
       + 'entre desde e ate (AAAA-MM-DD; desde padrão hoje, ate opcional). Devolve a regra salva e um aviso, se houver.',
     inputSchema: ruleFields,
     annotations: WRITES,
-  }, handler(async ({ chave, texto, inicio, minutos, comentario, desde, ate, ativa }) => {
+  }, writeHandler(async ({ chave, texto, inicio, minutos, comentario, desde, ate, ativa }) => {
     const s = sched();
     const r = await s.addRule({
       key: chave === undefined ? null : upperKey(chave), summary: texto ?? null, start: inicio, minutes: minutos,
@@ -575,7 +612,7 @@ function registerWriteTools({ server, user, jira, handler, record, previews, aut
       ...Object.fromEntries(Object.entries(ruleFields).map(([k, v]) => [k, v.optional()])),
     },
     annotations: WRITES,
-  }, handler(async ({ id: rawId, chave, texto, inicio, minutos, comentario, desde, ate, ativa }) => {
+  }, writeHandler(async ({ id: rawId, chave, texto, inicio, minutos, comentario, desde, ate, ativa }) => {
     const id = ruleId(rawId);
     const s = sched();
     const next = await currentRule(s, id);
@@ -600,7 +637,7 @@ function registerWriteTools({ server, user, jira, handler, record, previews, aut
       pausar: z.boolean().describe('true pausa; false retoma.'),
     },
     annotations: WRITES,
-  }, handler(async ({ id: rawId, pausar }) => {
+  }, writeHandler(async ({ id: rawId, pausar }) => {
     const id = ruleId(rawId);
     if (typeof pausar !== 'boolean') throw new ToolError('Informe pausar: true ou false.');
     const s = sched();
@@ -615,7 +652,7 @@ function registerWriteTools({ server, user, jira, handler, record, previews, aut
     description: 'Exclui a regra do id informado (listar_regras). Os apontamentos já gravados por ela continuam no Jira.',
     inputSchema: { id: z.string().describe('Id da regra (listar_regras).') },
     annotations: WRITES,
-  }, handler(async ({ id: rawId }) => {
+  }, writeHandler(async ({ id: rawId }) => {
     const id = ruleId(rawId);
     await sched().removeRule(id);
     record('excluir_regra', { regraId: id });

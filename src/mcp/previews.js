@@ -1,6 +1,7 @@
 // Prévias do MCP (gerar_previa → confirmar_previa) em memória, por usuário.
 //
-// createPreviewStore({ ttlMs = 30 min, now }) → { put(userId, preview) → id, take(userId, id) → preview | null }
+// createPreviewStore({ ttlMs = 30 min, now }) → { put(userId, preview) → id, take(userId, id) → preview | null,
+//   get(userId, id) → preview | null (mesmas regras de take, sem consumir; para validar antes de gravar) }
 //  - id aleatório (128 bits, base64url), impossível de adivinhar.
 //  - take é de uso único para a dona; id de outro usuário, inexistente ou vencido → null
 //    (o de outro usuário não é consumido, para ninguém "queimar" a prévia alheia).
@@ -23,13 +24,19 @@ export function createPreviewStore({ ttlMs = 30 * 60e3, now = () => Date.now() }
       items.set(id, { userId, preview, expiresAt: now() + ttlMs });
       return id;
     },
+    get,
     take(userId, id) {
-      if (typeof id !== 'string') return null;
-      const it = items.get(id);
-      if (!it || it.userId !== userId) return null;
-      if (it.expiresAt <= now()) { items.delete(id); return null; }
-      items.delete(id);
-      return it.preview;
+      const preview = get(userId, id);
+      if (preview) items.delete(id);
+      return preview;
     },
   };
+
+  function get(userId, id) {
+    if (typeof id !== 'string') return null;
+    const it = items.get(id);
+    if (!it || it.userId !== userId) return null;
+    if (it.expiresAt <= now()) { items.delete(id); return null; }
+    return it.preview;
+  }
 }
