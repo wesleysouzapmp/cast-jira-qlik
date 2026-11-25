@@ -16,6 +16,7 @@ import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { HttpError, route, auditLog } from '../web/route.js';
 import { registerTools } from './tools.js';
+import { createPreviewStore } from './previews.js';
 
 const { version } = createRequire(import.meta.url)('../../package.json');
 
@@ -30,14 +31,15 @@ export function publicUrlFor(config, port) {
 
 // Um servidor por requisição (modo sem estado). deps = { ...serverDeps, user, auth, publicUrl }:
 // `user` é { id, name, email, role } de quem chama e `auth` o AuthInfo do Bearer (extra.userId).
-// serverDeps (de createApp): { contexts, holidayProvider, autoRunner, now }. Sem `user` (ex.: testes
-// de unidade), o servidor sobe sem ferramentas.
+// serverDeps (de createApp): { contexts, holidayProvider, autoRunner, now }; mountMcp acrescenta
+// `previews` (createPreviewStore único do processo) e `audit`. Sem `user` (ex.: testes de unidade),
+// o servidor sobe sem ferramentas.
 export function createMcpServer(deps = {}) {
   const server = new McpServer({ name: 'cast-jira', version });
-  const { user, contexts, holidayProvider, autoRunner, publicUrl, now } = deps;
+  const { user, contexts, holidayProvider, autoRunner, publicUrl, now, previews, audit } = deps;
   if (user) {
     const ctx = contexts ? contexts.forUser(user) : { missing: true };
-    registerTools(server, { user, ctx, holidays: holidayProvider, autoRunner, publicUrl, ...(now ? { now } : {}) });
+    registerTools(server, { user, ctx, holidays: holidayProvider, autoRunner, publicUrl, previews, audit, ...(now ? { now } : {}) });
   }
   return server;
 }
@@ -46,6 +48,8 @@ export function mountMcp(app, { provider, publicUrl, users, audit, rateLimit, se
   if (!provider || !publicUrl || !users) throw new Error('mountMcp: provider, publicUrl e users são obrigatórios.');
   const base = String(publicUrl).replace(/\/+$/, '');
   const rl = rateLimit === undefined ? {} : { rateLimit };
+  // Prévias do gerar_previa: uma loja para todas as requisições (servidores são por requisição).
+  const previews = serverDeps.previews ?? createPreviewStore(serverDeps.now ? { now: serverDeps.now } : {});
 
   // Segredo de cliente confidencial conferido antes dos handlers do SDK.
   const secretCheck = [express.urlencoded({ extended: false }), provider.checkClientSecret];
@@ -85,7 +89,7 @@ export function mountMcp(app, { provider, publicUrl, users, audit, rateLimit, se
   app.post('/mcp', bearer, async (req, res) => {
     const u = users.byId(req.auth.extra.userId);
     const user = { id: u.id, name: u.name, email: u.email, role: u.role };
-    const server = createMcpServer({ ...serverDeps, user, auth: req.auth, publicUrl: base });
+    const server = createMcpServer({ ...serverDeps, previews, audit, user, auth: req.auth, publicUrl: base });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on('close', () => { transport.close(); server.close(); });
     try {
