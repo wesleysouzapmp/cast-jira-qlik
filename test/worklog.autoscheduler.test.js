@@ -1,6 +1,20 @@
-import { test } from 'node:test';
+import { test as nodeTest } from 'node:test';
 import assert from 'node:assert/strict';
 import { createAutoStore, createAutoScheduler } from '../src/worklog/auto.js';
+import { openDb } from '../src/db/index.js';
+import { autoStoreFor } from '../src/db/userData.js';
+
+// Cada caso roda duas vezes: com o store em arquivo (memFs) e com o store SQLite por usuário.
+let kind = 'json';
+const test = (name, fn) => {
+  for (const k of ['json', 'db']) nodeTest(`${name} [${k}]`, async () => { kind = k; await fn(); });
+};
+
+function dbStore() {
+  const db = openDb();
+  db.prepare("INSERT INTO users (id, email, name, password_hash, created_at) VALUES ('u1', 'u@x.com', 'U', 'h', 0)").run();
+  return autoStoreFor(db, 'u1');
+}
 
 function memFs() {
   const files = new Map();
@@ -14,7 +28,7 @@ function memFs() {
 
 function setup({ now = Date.parse('2026-11-10T12:30:00Z'), results = {}, disabled = false } = {}) {
   const fs = memFs();
-  const store = createAutoStore({ file: 'rules.json', logFile: 'log.json', ...fs, log: () => {} });
+  const store = kind === 'db' ? dbStore() : createAutoStore({ file: 'rules.json', logFile: 'log.json', ...fs, log: () => {} });
   const calls = [];
   const service = {
     async findBySummary(text) {
@@ -27,7 +41,7 @@ function setup({ now = Date.parse('2026-11-10T12:30:00Z'), results = {}, disable
   const holidays = { async between() { return new Map([['2026-11-04', 'Feriado']]); } };
   const clock = { t: now };
   const sched = createAutoScheduler({ store, service, holidays, now: () => clock.t, disabled, log: () => {} });
-  return { fs, store, service, calls, sched, clock };
+  return { fs, store, service, calls, sched, clock, kind };
 }
 
 test('tick grava os dias úteis pendentes uma única vez', async () => {
@@ -91,7 +105,7 @@ test('addRule confere a chave no Jira; excluir remove a regra', async () => {
   await assert.rejects(s.sched.addRule({ key: 'SIJUD-1', start: 'x', minutes: 15 }), RangeError);
   const r = await s.sched.addRule({ key: 'SIJUD-1', start: '09:00', minutes: 15 });
   assert.equal(r.since, '2026-11-10');
-  assert.equal(JSON.parse(s.fs.files.get('rules.json')).rules.length, 1);
+  assert.equal((await s.store.readRules()).rules.length, 1);
   await s.sched.removeRule(r.id);
   assert.deepEqual((await s.sched.status()).rules, []);
   await assert.rejects(s.sched.removeRule('nao-existe'), /não encontrada/);
@@ -99,6 +113,7 @@ test('addRule confere a chave no Jira; excluir remove a regra', async () => {
 
 test('arquivo de regras inválido vira lista vazia, sem derrubar o agendador', async () => {
   const s = setup();
+  if (s.kind === 'db') return; // arquivo corrompido só existe no store JSON
   s.fs.files.set('rules.json', '{quebrado');
   const st = await s.sched.status();
   assert.deepEqual(st.rules, []);
