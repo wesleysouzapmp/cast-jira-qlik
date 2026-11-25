@@ -51,3 +51,22 @@ test('tokens: randomToken tem 43 chars e é único; sha256 é hex', () => {
   assert.notEqual(a, randomToken());
   assert.equal(sha256('abc'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
 });
+
+test('decrypt: tag truncado lança', () => {
+  const p = encrypt('abc', key).split(':');
+  p[2] = Buffer.from(p[2], 'base64').subarray(0, 4).toString('base64');
+  assert.throws(() => decrypt(p.join(':'), key), /decrypt/);
+});
+
+test('decrypt: tag adulterado lança', () => {
+  const p = encrypt('abc', key).split(':');
+  const t = Buffer.from(p[2], 'base64');
+  t[0] ^= 1;
+  p[2] = t.toString('base64');
+  assert.throws(() => decrypt(p.join(':'), key), /decrypt/);
+});
+
+test('decrypt: blob malformado lança', () => {
+  assert.throws(() => decrypt('', key), /decrypt/);
+  assert.throws(() => decrypt('v2:a:b:c', key), /decrypt/);
+});

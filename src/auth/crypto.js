@@ -20,8 +20,11 @@ export function decrypt(blob, key) {
   try {
     const [v, iv, tag, data] = String(blob).split(':');
     if (v !== 'v1' || !iv || !tag || data === undefined) throw new Error('formato');
-    const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64'));
-    decipher.setAuthTag(Buffer.from(tag, 'base64'));
+    const ivBuf = Buffer.from(iv, 'base64');
+    const tagBuf = Buffer.from(tag, 'base64');
+    if (ivBuf.length !== 12 || tagBuf.length !== 16) throw new Error('formato');
+    const decipher = createDecipheriv('aes-256-gcm', key, ivBuf, { authTagLength: 16 });
+    decipher.setAuthTag(tagBuf);
     return Buffer.concat([decipher.update(Buffer.from(data, 'base64')), decipher.final()]).toString('utf8');
   } catch {
     throw new Error('decrypt');
