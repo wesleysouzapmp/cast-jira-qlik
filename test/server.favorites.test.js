@@ -1,9 +1,6 @@
-import { test, after } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createApp } from '../src/server.js';
-
-const servers = [];
-after(() => servers.forEach((s) => s.close()));
+import { makeTestApp } from './helpers/app.js';
 
 function fakes() {
   const keys = ['SIJUD-1'];
@@ -24,13 +21,9 @@ function fakes() {
   return { worklogService, favoritesStore, calls, keys };
 }
 
-async function start(f, { tokenConfigured = true } = {}) {
-  const app = createApp({ client: { async call() { return { ok: true, status: 200, data: {} }; } }, config: { baseUrl: 'https://x', email: 'e', tokenConfigured }, worklogService: f.worklogService, favoritesStore: f.favoritesStore });
-  const server = await new Promise((r) => { const s = app.listen(0, () => r(s)); });
-  servers.push(server);
-  const base = `http://127.0.0.1:${server.address().port}`;
-  const json = (method, path, body) => fetch(base + path, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
-  return { base, json };
+async function start(f) {
+  const client = { async call() { return { ok: true, status: 200, data: {} }; } };
+  return makeTestApp({ services: { client, worklogService: f.worklogService, favorites: f.favoritesStore } });
 }
 
 test('GET favoritos devolve as chaves descritas pelo Jira', async () => {
@@ -75,8 +68,8 @@ test('DELETE favoritos remove a chave', async () => {
 
 test('favoritos: outra origem é recusada', async () => {
   const f = fakes();
-  const { base } = await start(f);
-  const res = await fetch(base + '/api/worklog/favorites', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' }, body: JSON.stringify({ key: 'BI-3000' }) });
+  const { json } = await start(f);
+  const res = await json('POST', '/api/worklog/favorites', { key: 'BI-3000' }, { Origin: 'https://evil.example' });
   assert.equal(res.status, 403);
   assert.deepEqual(f.keys, ['SIJUD-1']);
 });

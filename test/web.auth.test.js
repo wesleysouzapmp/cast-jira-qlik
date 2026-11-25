@@ -23,8 +23,8 @@ async function start({ publicHost, clock } = {}) {
   const sessions = createSessionRepo(db, clock?.now);
   const limiter = createRateLimiter({ max: 5, windowMs: 15 * 60 * 1000 });
   const config = { baseUrl: 'https://x.atlassian.net', email: 'e@x', tokenConfigured: true, ...(publicHost ? { publicHost } : {}) };
-  const worklogService = { async listTasks() { return []; } };
-  const app = createApp({ client: { async call() { return {}; } }, config, worklogService, users, sessions, limiter, now: clock?.now });
+  const contexts = { forUser: () => ({ worklogService: { async listTasks() { return []; } }, secrets: { tokenStatus: 'missing' } }), invalidate() {} };
+  const app = createApp({ config, db, users, sessions, contexts, limiter, now: clock?.now });
   const server = await new Promise((r) => { const s = app.listen(0, () => r(s)); });
   servers.push(server);
   const port = server.address().port;
@@ -198,13 +198,12 @@ test('POST com Origin de outro site dá 403; mesmo host passa', async () => {
   assert.equal(ok.status, 200);
 });
 
-test('createApp sem auth continua igual (sem 401, sem rotas de login)', async () => {
-  const app = createApp({ client: { async call() { return {}; } }, config: { tokenConfigured: true } });
-  const server = await new Promise((r) => { const s = app.listen(0, () => r(s)); });
-  servers.push(server);
-  const base = `http://127.0.0.1:${server.address().port}`;
-  assert.equal((await fetch(base + '/api/catalog')).status, 200);
-  assert.equal((await fetch(base + '/api/me')).status, 404);
+test('autenticação é obrigatória: createApp sem users/sessions/contexts falha e /api/catalog exige sessão', async () => {
+  assert.throws(() => createApp({ config: {} }), /obrigatórios/);
+  const { base, post } = await start();
+  assert.equal((await fetch(base + '/api/catalog')).status, 401);
+  const cookie = cookieOf(await post('/api/login', { email: 'ana@x.com', senha: SENHA }));
+  assert.equal((await fetch(base + '/api/catalog', { headers: { cookie } })).status, 200);
 });
 
 test('caminhos com caixa diferente não escapam do requireUser', async () => {

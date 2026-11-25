@@ -6,6 +6,7 @@ import { JiraError } from './support/service.js';
 import { ConflictError, ScopeError } from './worklog/service.js';
 import { AiError } from './worklog/ai.js';
 import { registerAuth } from './web/auth.js';
+import { createAuditRepo } from './db/audit.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../public', import.meta.url));
 const SHARED_DIR = fileURLToPath(new URL('./shared', import.meta.url));
@@ -56,9 +57,25 @@ function parseKeys(keys) {
 }
 
 class NotFound extends Error {}
+class MissingToken extends Error {}
+const MISSING_TOKEN = 'Configure seu token do Jira em Minha conta.';
 
-// Handler das rotas que gravam no Jira (tarefas de apoio e apontamento): Origin, token e erros.
-function makeGuard(config) {
+// Contexto Jira do usuário logado (req.ctx); sem token utilizável -> 409.
+function jiraCtx(req) {
+  if (!req.ctx || req.ctx.missing) throw new MissingToken(MISSING_TOKEN);
+  return req.ctx;
+}
+
+// Grava a auditoria sem derrubar a resposta: a ação no Jira já aconteceu.
+function auditWeb(audit, req, action, detail) {
+  if (!audit) return;
+  try { audit.log({ userId: req.user.id, via: 'web', action, detail }); } catch (err) { console.error('[auditoria]', err?.message); }
+}
+const uniqueKeys = (list, field) => [...new Set(list.map((x) => x[field]))];
+
+// Handler das rotas da API: Origin, contexto Jira (quando exigido) e mapeamento de erros.
+// fn(req, ctx) recebe o contexto do usuário; com { jira: false } a rota não exige token.
+function makeGuard({ jira = true } = {}) {
   return (fn) => async (req, res) => {
     try {
       // Outra página aberta no navegador não pode disparar a criação.
@@ -70,9 +87,10 @@ function makeGuard(config) {
           return res.status(403).json({ error: 'Origem não permitida.' });
         }
       }
-      if (!config.tokenConfigured) throw new BadRequest('Token não configurado no .env (JIRA_EMAIL e JIRA_API_TOKEN).');
-      res.json(await fn(req));
+      const ctx = jira ? jiraCtx(req) : req.ctx;
+      res.json(await fn(req, ctx));
     } catch (err) {
+      if (err instanceof MissingToken) return res.status(409).json({ error: err.message });
       if (err instanceof BadRequest) return res.status(400).json({ error: err.message });
       if (err instanceof NotFound) return res.status(404).json({ error: err.message });
       if (err instanceof ConflictError) return res.status(409).json({ error: err.message });
@@ -85,15 +103,20 @@ function makeGuard(config) {
 }
 
 // Rotas das "Tarefas de apoio".
-function registerSupportRoutes(app, { service, config }) {
-  const handle = makeGuard(config);
-  app.get('/api/support/items', handle((req) => {
+function registerSupportRoutes(app, { audit }) {
+  const handle = makeGuard();
+  app.get('/api/support/items', handle((req, ctx) => {
     const opts = { onlyEpics: req.query.onlyEpics === '1' };
     if (req.query.includeDone === '1') opts.includeDone = true;
-    return service.listItems(opts);
+    return ctx.supportService.listItems(opts);
   }));
-  app.post('/api/support/preview', handle((req) => service.preview(parseKeys(req.body?.keys))));
-  app.post('/api/support/create', handle((req) => service.create(parseKeys(req.body?.keys))));
+  app.post('/api/support/preview', handle((req, ctx) => ctx.supportService.preview(parseKeys(req.body?.keys))));
+  app.post('/api/support/create', handle(async (req, ctx) => {
+    const keys = parseKeys(req.body?.keys);
+    const out = await ctx.supportService.create(keys);
+    auditWeb(audit, req, 'support.create', { keys });
+    return out;
+  }));
 }
 
 // ---- Apontamento de horas: validação de entrada ----
@@ -201,70 +224,102 @@ function parseChanges(changes) {
 }
 
 // Rotas do apontamento de horas.
-function registerWorklogRoutes(app, { service, config, favorites }) {
-  const handle = makeGuard(config);
-  app.get('/api/worklog/tasks', handle(() => service.listTasks()));
+function registerWorklogRoutes(app, { audit }) {
+  const handle = makeGuard();
+  app.get('/api/worklog/tasks', handle((_req, ctx) => ctx.worklogService.listTasks()));
 
   // Tarefas avulsas: consulta de uma chave e favoritos (favoritos.json).
   const checkKey = (key) => {
     if (typeof key !== 'string' || !KEY_RE.test(key)) throw new BadRequest('Chave de tarefa inválida (ex.: SIJUD-123).');
     return key;
   };
-  app.get('/api/worklog/lookup', handle(async (req) => {
-    const [task] = await service.describe([checkKey(req.query.key)]);
+  app.get('/api/worklog/lookup', handle(async (req, ctx) => {
+    const [task] = await ctx.worklogService.describe([checkKey(req.query.key)]);
     return { task };
   }));
-  if (favorites) {
-    app.get('/api/worklog/favorites', handle(async () => {
-      const keys = await favorites.list();
-      return { favorites: keys.length ? await service.describe(keys) : [] };
-    }));
-    app.post('/api/worklog/favorites', handle(async (req) => {
-      const [task] = await service.describe([checkKey(req.body?.key)]);
-      if (!task.available) throw new BadRequest(task.error);
-      try { await favorites.add(task.key); } catch (err) { if (err instanceof RangeError) throw new BadRequest(err.message); throw err; }
-      return { favorite: task };
-    }));
-    app.delete('/api/worklog/favorites/:key', handle(async (req) => {
-      await favorites.remove(checkKey(req.params.key));
-      return { ok: true };
-    }));
-  }
-  app.get('/api/worklog/calendar', handle(async (req) => {
+  app.get('/api/worklog/favorites', handle(async (_req, ctx) => {
+    const keys = await ctx.favorites.list();
+    return { favorites: keys.length ? await ctx.worklogService.describe(keys) : [] };
+  }));
+  app.post('/api/worklog/favorites', handle(async (req, ctx) => {
+    const [task] = await ctx.worklogService.describe([checkKey(req.body?.key)]);
+    if (!task.available) throw new BadRequest(task.error);
+    try { await ctx.favorites.add(task.key); } catch (err) { if (err instanceof RangeError) throw new BadRequest(err.message); throw err; }
+    return { favorite: task };
+  }));
+  app.delete('/api/worklog/favorites/:key', handle(async (req, ctx) => {
+    await ctx.favorites.remove(checkKey(req.params.key));
+    return { ok: true };
+  }));
+  app.get('/api/worklog/calendar', handle(async (req, ctx) => {
     const from = checkDate(req.query.from, 'Data inicial');
     const to = checkDate(req.query.to, 'Data final');
     const days = (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000 + 1;
     if (days < 1 || days > 62) throw new BadRequest('Período do calendário: de 1 a 62 dias.');
-    return { entries: await service.myWorklogs(from, to) };
+    return { entries: await ctx.worklogService.myWorklogs(from, to) };
   }));
-  app.post('/api/worklog/preview', handle((req) => service.preview(parsePreview(req.body))));
-  app.post('/api/worklog/ai-comments', handle((req) => {
-    if (!service.aiEnabled) throw new NotFound('IA não configurada (defina ANTHROPIC_API_KEY no .env).');
-    return service.aiComments(parseEntries(req.body?.entries));
+  app.post('/api/worklog/preview', handle((req, ctx) => ctx.worklogService.preview(parsePreview(req.body))));
+  app.post('/api/worklog/ai-comments', handle((req, ctx) => {
+    if (!ctx.worklogService.aiEnabled) throw new NotFound('IA não configurada (cadastre sua chave Anthropic em Minha conta).');
+    return ctx.worklogService.aiComments(parseEntries(req.body?.entries));
   }));
-  app.post('/api/worklog/submit', handle((req) => service.submit({ entries: parseEntries(req.body?.entries) })));
-  app.post('/api/worklog/batch', handle((req) => service.batch({ changes: parseChanges(req.body?.changes) })));
+  app.post('/api/worklog/submit', handle(async (req, ctx) => {
+    const entries = parseEntries(req.body?.entries);
+    const out = await ctx.worklogService.submit({ entries });
+    auditWeb(audit, req, 'worklog.submit', { entries: entries.length, keys: uniqueKeys(entries, 'taskKey') });
+    return out;
+  }));
+  app.post('/api/worklog/batch', handle(async (req, ctx) => {
+    const changes = parseChanges(req.body?.changes);
+    const out = await ctx.worklogService.batch({ changes });
+    auditWeb(audit, req, 'worklog.batch', { changes: changes.length, keys: uniqueKeys(changes, 'issueKey') });
+    return out;
+  }));
 }
 
-// Apontamentos automáticos (agendamentos.json). Erros de validação (RangeError) viram 400.
-function registerAutoRoutes(app, { scheduler, config }) {
-  const handle = makeGuard(config);
+// Apontamentos automáticos do usuário logado (autoRunner.schedulerFor). Não exigem token do
+// Jira (o executor pula quem não está com token ok). Erros de validação (RangeError) viram 400.
+function registerAutoRoutes(app, { autoRunner, audit }) {
+  const handle = makeGuard({ jira: false });
+  const sched = (req) => autoRunner.schedulerFor(req.user.id);
   const v = (fn) => handle(async (req) => {
-    try { return await fn(req); } catch (err) { if (err instanceof RangeError) throw new BadRequest(err.message); throw err; }
+    try { return await fn(req, sched(req)); } catch (err) { if (err instanceof RangeError) throw new BadRequest(err.message); throw err; }
   });
-  app.get('/api/auto', handle(() => scheduler.status()));
-  app.post('/api/auto/rules', v(async (req) => ({ rule: await scheduler.addRule(req.body ?? {}) })));
-  app.put('/api/auto/rules/:id', v(async (req) => ({ rule: await scheduler.updateRule(String(req.params.id), req.body ?? {}) })));
-  app.delete('/api/auto/rules/:id', v(async (req) => { await scheduler.removeRule(String(req.params.id)); return { ok: true }; }));
-  app.post('/api/auto/paused', v(async (req) => {
-    if (typeof req.body?.paused !== 'boolean') throw new BadRequest('Informe paused: true ou false.');
-    await scheduler.setPaused(req.body.paused);
+  app.get('/api/auto', handle((req) => sched(req).status()));
+  app.post('/api/auto/rules', v(async (req, s) => {
+    const rule = await s.addRule(req.body ?? {});
+    auditWeb(audit, req, 'auto.rule.add', { ruleId: rule?.id ?? null, key: rule?.key ?? null });
+    return { rule };
+  }));
+  app.put('/api/auto/rules/:id', v(async (req, s) => {
+    const rule = await s.updateRule(String(req.params.id), req.body ?? {});
+    auditWeb(audit, req, 'auto.rule.update', { ruleId: String(req.params.id), key: rule?.key ?? null });
+    return { rule };
+  }));
+  app.delete('/api/auto/rules/:id', v(async (req, s) => {
+    await s.removeRule(String(req.params.id));
+    auditWeb(audit, req, 'auto.rule.remove', { ruleId: String(req.params.id) });
     return { ok: true };
   }));
-  app.post('/api/auto/run', handle(async () => ({ results: await scheduler.tick() })));
+  app.post('/api/auto/paused', v(async (req, s) => {
+    if (typeof req.body?.paused !== 'boolean') throw new BadRequest('Informe paused: true ou false.');
+    await s.setPaused(req.body.paused);
+    auditWeb(audit, req, 'auto.paused', { paused: req.body.paused });
+    return { ok: true };
+  }));
+  app.post('/api/auto/run', handle(async (req) => {
+    const results = await sched(req).tick();
+    auditWeb(audit, req, 'auto.run', { results: Array.isArray(results) ? results.length : 0 });
+    return { results };
+  }));
 }
 
-export function createApp({ client, config, supportService, worklogService, holidayProvider, favoritesStore, autoScheduler, users, sessions, limiter, now }) {
+// Dependências obrigatórias: config, users, sessions, contexts e limiter (a autenticação é
+// sempre registrada). `audit` é opcional: se ausente e houver `db`, é criado a partir dele.
+// holidayProvider e autoRunner são opcionais (sem eles, /api/holidays e /api/auto* não existem).
+export function createApp({ config, db, users, sessions, contexts, holidayProvider, autoRunner, limiter, now, audit }) {
+  if (!users || !sessions || !contexts || !limiter) throw new Error('createApp: users, sessions, contexts e limiter são obrigatórios.');
+  audit ??= db ? createAuditRepo(db, now) : null;
   const app = express();
   app.set('case sensitive routing', true);
   const stripPort = (h) => String(h ?? '').replace(/:\d+$/, '').toLowerCase();
@@ -299,13 +354,16 @@ export function createApp({ client, config, supportService, worklogService, holi
 
   app.use(express.json({ limit: '1mb' }));
 
-  if (users && sessions) {
-    const requireUser = registerAuth(app, { users, sessions, limiter, config, now });
-    app.use(requireUser);
-  }
+  const requireUser = registerAuth(app, { users, sessions, limiter, config, now });
+  app.use(requireUser);
+  // Contexto por usuário (serviços com as credenciais Jira dele); só para requisições logadas.
+  app.use((req, _res, next) => {
+    if (req.user) req.ctx = contexts.forUser(req.user);
+    next();
+  });
 
-  app.get('/api/config', (_req, res) => {
-    res.json({ baseUrl: config.baseUrl, email: config.email, tokenConfigured: Boolean(config.tokenConfigured) });
+  app.get('/api/config', (req, res) => {
+    res.json({ baseUrl: config.baseUrl, email: req.user.email, tokenConfigured: req.ctx?.secrets?.tokenStatus === 'ok' });
   });
 
   app.get('/api/catalog', (_req, res) => res.json(CATALOG));
@@ -313,10 +371,11 @@ export function createApp({ client, config, supportService, worklogService, holi
   function guard(handler) {
     return async (req, res) => {
       try {
-        if (!config.tokenConfigured) throw new BadRequest('Token não configurado no .env (JIRA_EMAIL e JIRA_API_TOKEN).');
+        const { client } = jiraCtx(req);
         const resolved = resolveRequest(req.body);
-        res.json(await handler(resolved, req.body ?? {}));
+        res.json(await handler(resolved, req.body ?? {}, client));
       } catch (err) {
+        if (err instanceof MissingToken) return res.status(409).json({ error: err.message });
         if (err instanceof BadRequest) return res.status(400).json({ error: err.message });
         console.error('[erro interno]', err?.message);
         res.status(500).json({ error: 'Erro interno no servidor do app.' });
@@ -324,9 +383,9 @@ export function createApp({ client, config, supportService, worklogService, holi
     };
   }
 
-  app.post('/api/call', guard(async ({ request }) => ({ request, ...(await client.call(request)) })));
+  app.post('/api/call', guard(async ({ request }, _input, client) => ({ request, ...(await client.call(request)) })));
 
-  app.post('/api/paginate', guard(async ({ endpoint, request }, input) => {
+  app.post('/api/paginate', guard(async ({ endpoint, request }, input, client) => {
     const maxPages = Math.min(Math.max(Number(input.maxPages) || 20, 1), 1000);
     const result = await paginate({
       fetchPage: (r) => client.call(r),
@@ -338,9 +397,9 @@ export function createApp({ client, config, supportService, worklogService, holi
     return { request, ...result };
   }));
 
-  if (supportService) registerSupportRoutes(app, { service: supportService, config });
-  if (worklogService) registerWorklogRoutes(app, { service: worklogService, config, favorites: favoritesStore });
-  if (autoScheduler) registerAutoRoutes(app, { scheduler: autoScheduler, config });
+  registerSupportRoutes(app, { audit });
+  registerWorklogRoutes(app, { audit });
+  if (autoRunner) registerAutoRoutes(app, { autoRunner, audit });
   if (holidayProvider) {
     app.get('/api/holidays', async (req, res) => {
       try {

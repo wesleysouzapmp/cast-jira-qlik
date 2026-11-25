@@ -1,10 +1,7 @@
-import { test, after } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createApp } from '../src/server.js';
 import http from 'node:http';
-
-const servers = [];
-after(() => servers.forEach((s) => s.close()));
+import { makeTestApp } from './helpers/app.js';
 
 async function start({ responses = [{ status: 200, ok: true, ms: 1, data: {} }], tokenConfigured = true, supportService, worklogService, holidayProvider } = {}) {
   const calls = [];
@@ -14,24 +11,24 @@ async function start({ responses = [{ status: 200, ok: true, ms: 1, data: {} }],
       return responses[Math.min(calls.length - 1, responses.length - 1)];
     },
   };
-  const app = createApp({ client, config: { baseUrl: 'https://x.atlassian.net', email: 'e@x', tokenConfigured }, supportService, worklogService, holidayProvider });
-  const server = await new Promise((r) => { const s = app.listen(0, () => r(s)); });
-  servers.push(server);
-  const base = `http://127.0.0.1:${server.address().port}`;
-  const post = (path, body, headers = {}) => fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
-  return { base, post, calls };
+  const services = tokenConfigured ? { client, supportService, worklogService } : { missing: true };
+  const t = await makeTestApp({ services, holidayProvider });
+  const get = (path, opts = {}) => fetch(t.base + path, { ...opts, headers: { cookie: t.cookie, ...(opts.headers ?? {}) } });
+  const post = (path, body, headers = {}) => t.json('POST', path, body, headers);
+  return { ...t, get, post, calls };
 }
 
 test('config hides token', async () => {
-  const { base } = await start();
-  const res = await fetch(base + '/api/config');
+  const { get, user } = await start();
+  const res = await get('/api/config');
   const json = await res.json();
-  assert.deepEqual(json, { baseUrl: 'https://x.atlassian.net', email: 'e@x', tokenConfigured: true });
+  assert.deepEqual(json, { baseUrl: 'https://x.atlassian.net', email: user.email, tokenConfigured: true });
+  assert.equal(user.email, 'ana@x.com');
 });
 
 test('catalog route', async () => {
-  const { base } = await start();
-  const json = await (await fetch(base + '/api/catalog')).json();
+  const { get } = await start();
+  const json = await (await get('/api/catalog')).json();
   assert.ok(json.some((e) => e.id === 'search-jql'));
 });
 
@@ -78,12 +75,21 @@ test('missing path param', async () => {
   assert.match((await res.json()).error, /sprintId/);
 });
 
-test('no token', async () => {
-  const { post, calls } = await start({ tokenConfigured: false });
-  const res = await post('/api/call', { endpointId: 'myself' });
-  assert.equal(res.status, 400);
-  assert.match((await res.json()).error, /Token não configurado/);
+test('no token: rotas do Jira dão 409 e /api/config indica token ausente', async () => {
+  const { post, get, calls } = await start({ tokenConfigured: false });
+  for (const p of ['/api/call', '/api/paginate']) {
+    const res = await post(p, { endpointId: 'myself' });
+    assert.equal(res.status, 409, p);
+    assert.equal((await res.json()).error, 'Configure seu token do Jira em Minha conta.');
+  }
+  for (const p of ['/api/worklog/tasks', '/api/support/items', '/api/worklog/favorites']) {
+    const res = await get(p);
+    assert.equal(res.status, 409, p);
+    assert.equal((await res.json()).error, 'Configure seu token do Jira em Minha conta.');
+  }
   assert.equal(calls.length, 0);
+  assert.equal((await (await get('/api/config')).json()).tokenConfigured, false);
+  assert.equal((await get('/api/catalog')).status, 200);
 });
 
 test('paginate uses catalog strategy', async () => {
@@ -108,8 +114,8 @@ test('paginate custom uses given strategy', async () => {
 });
 
 test('serves shared lib and ui', async () => {
-  const { base } = await start();
-  const res = await fetch(base + '/lib/flatten.js');
+  const { get } = await start();
+  const res = await get('/lib/flatten.js');
   assert.equal(res.status, 200);
   assert.match(res.headers.get('content-type'), /javascript/);
 });
@@ -127,9 +133,9 @@ test('rejects foreign Host header (DNS rebinding)', async () => {
 });
 
 test('accepts localhost Host header', async () => {
-  const { base } = await start();
+  const { base, cookie } = await start();
   const port = new URL(base).port;
-  const res = await fetch(`http://localhost:${port}/api/config`);
+  const res = await fetch(`http://localhost:${port}/api/config`, { headers: { cookie } });
   assert.equal(res.status, 200);
 });
 
@@ -148,14 +154,14 @@ function fakeSupport({ fail } = {}) {
 
 test('support items repassa onlyEpics', async () => {
   const { svc, calls } = fakeSupport();
-  const { base } = await start({ supportService: svc });
-  const res = await fetch(base + '/api/support/items?onlyEpics=1');
+  const { get } = await start({ supportService: svc });
+  const res = await get('/api/support/items?onlyEpics=1');
   assert.equal(res.status, 200);
   assert.deepEqual(await res.json(), { items: [], truncated: false });
   assert.deepEqual(calls[0], ['list', { onlyEpics: true }]);
-  await fetch(base + '/api/support/items');
+  await get('/api/support/items');
   assert.deepEqual(calls[1], ['list', { onlyEpics: false }]);
-  await fetch(base + '/api/support/items?includeDone=1');
+  await get('/api/support/items?includeDone=1');
   assert.deepEqual(calls[2], ['list', { onlyEpics: false, includeDone: true }]);
 });
 
@@ -203,17 +209,18 @@ test('support create aceita Origin do próprio app', async () => {
 
 test('support JiraError vira 502', async () => {
   const { svc } = fakeSupport({ fail: new JiraError(401, 'Busca: HTTP 401 Não autorizado') });
-  const { base } = await start({ supportService: svc });
-  const res = await fetch(base + '/api/support/items');
+  const { get } = await start({ supportService: svc });
+  const res = await get('/api/support/items');
   assert.equal(res.status, 502);
   assert.match((await res.json()).error, /Não autorizado/);
 });
 
-test('support sem token → 400', async () => {
+test('support sem token → 409', async () => {
   const { svc, calls } = fakeSupport();
   const { post } = await start({ supportService: svc, tokenConfigured: false });
   const res = await post('/api/support/create', { keys: ['BI-1'] });
-  assert.equal(res.status, 400);
+  assert.equal(res.status, 409);
+  assert.match((await res.json()).error, /Configure seu token do Jira/);
   assert.equal(calls.length, 0);
 });
 
@@ -240,8 +247,8 @@ const okEntry = { taskKey: 'QSENSE-1', date: '2026-11-09', start: '08:00', minut
 
 test('worklog tasks repassa o serviço', async () => {
   const { svc } = fakeWorklog();
-  const { base } = await start({ worklogService: svc });
-  const res = await fetch(base + '/api/worklog/tasks');
+  const { get } = await start({ worklogService: svc });
+  const res = await get('/api/worklog/tasks');
   assert.equal(res.status, 200);
   assert.deepEqual(await res.json(), { epics: [], aiEnabled: true });
 });
@@ -320,22 +327,22 @@ test('worklog ai-comments dá 404 sem IA', async () => {
   assert.equal(calls.filter((c) => c[0] === 'ai').length, 0);
 });
 
-test('worklog sem token → 400', async () => {
+test('worklog sem token → 409', async () => {
   const { svc, calls } = fakeWorklog();
   const { post } = await start({ worklogService: svc, tokenConfigured: false });
-  assert.equal((await post('/api/worklog/submit', { entries: [okEntry] })).status, 400);
+  assert.equal((await post('/api/worklog/submit', { entries: [okEntry] })).status, 409);
   assert.equal(calls.length, 0);
 });
 
 test('worklog calendar valida o período e repassa ao serviço', async () => {
   const { svc, calls } = fakeWorklog();
-  const { base } = await start({ worklogService: svc });
-  const ok = await fetch(base + '/api/worklog/calendar?from=2026-10-01&to=2026-12-01');
+  const { get } = await start({ worklogService: svc });
+  const ok = await get('/api/worklog/calendar?from=2026-10-01&to=2026-12-01');
   assert.equal(ok.status, 200);
   assert.deepEqual(await ok.json(), { entries: [] });
   assert.deepEqual(calls[0], ['calendar', '2026-10-01', '2026-12-01']); // 62 dias
   for (const q of ['from=2026-10-01&to=2026-12-02', 'from=2026-11-10&to=2026-11-09', 'from=x&to=2026-11-09', '']) {
-    assert.equal((await fetch(base + '/api/worklog/calendar?' + q)).status, 400, q);
+    assert.equal((await get('/api/worklog/calendar?' + q)).status, 400, q);
   }
   assert.equal(calls.length, 1);
 });
@@ -343,13 +350,13 @@ test('worklog calendar valida o período e repassa ao serviço', async () => {
 test('holidays repassa o período e valida', async () => {
   const seen = [];
   const holidayProvider = { async between(f, t) { seen.push([f, t]); return new Map([['2026-11-02', 'Finados']]); } };
-  const { base } = await start({ holidayProvider });
-  const ok = await fetch(base + '/api/holidays?from=2026-11-01&to=2026-11-30');
+  const { get } = await start({ holidayProvider });
+  const ok = await get('/api/holidays?from=2026-11-01&to=2026-11-30');
   assert.equal(ok.status, 200);
   assert.deepEqual(await ok.json(), { holidays: [{ date: '2026-11-02', name: 'Finados' }] });
   assert.deepEqual(seen, [['2026-11-01', '2026-11-30']]);
   for (const q of ['from=2026-01-01&to=2027-02-05', 'from=x&to=2026-11-01', 'from=2026-11-02&to=2026-11-01']) {
-    assert.equal((await fetch(base + '/api/holidays?' + q)).status, 400, q);
+    assert.equal((await get('/api/holidays?' + q)).status, 400, q);
   }
 });
 
@@ -386,4 +393,78 @@ test('worklog batch aceita duração e início fora dos blocos de 15 (o serviço
   for (const bad of [{ ...u, minutes: 0 }, { ...u, minutes: 481 }, { ...u, start: '23:59', minutes: 20 }, { ...u, updated: 5 }]) {
     assert.equal((await post('/api/worklog/batch', { changes: [bad] })).status, 400, JSON.stringify(bad));
   }
+});
+
+// ---- Multiusuário: auditoria, isolamento e sessão obrigatória ----
+const auditRows = (db) => db.prepare('SELECT user_id, via, action, detail FROM audit ORDER BY id').all()
+  .map((r) => ({ ...r, detail: r.detail === null ? null : JSON.parse(r.detail) }));
+
+test('submit pela web gera linha em audit com via = web (sem dados sensíveis)', async () => {
+  const { svc } = fakeWorklog();
+  const { post, db, user, cookie } = await start({ worklogService: svc });
+  assert.equal((await post('/api/worklog/submit', { entries: [okEntry, { ...okEntry, start: '09:00' }] })).status, 200);
+  const rows = auditRows(db);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].user_id, user.id);
+  assert.equal(rows[0].via, 'web');
+  assert.equal(rows[0].action, 'worklog.submit');
+  assert.deepEqual(rows[0].detail, { entries: 2, keys: ['QSENSE-1'] });
+  assert.equal(JSON.stringify(rows).includes(cookie.slice(4)), false);
+});
+
+test('batch e support create auditam; entrada inválida e erro do serviço não auditam', async () => {
+  const w = fakeWorklog();
+  const s = fakeSupport();
+  const t = await start({ worklogService: w.svc, supportService: s.svc });
+  assert.equal((await t.post('/api/worklog/batch', { changes: [{ id: '7', issueKey: 'QSENSE-1', action: 'delete' }] })).status, 200);
+  assert.equal((await t.post('/api/support/create', { keys: ['BI-1', 'BI-1'] })).status, 200);
+  assert.equal((await t.post('/api/worklog/submit', { entries: [] })).status, 400);
+  assert.equal((await t.post('/api/worklog/preview', okPreview)).status, 200);
+  assert.deepEqual(auditRows(t.db).map((r) => [r.via, r.action, r.detail]), [
+    ['web', 'worklog.batch', { changes: 1, keys: ['QSENSE-1'] }],
+    ['web', 'support.create', { keys: ['BI-1'] }],
+  ]);
+  const f = fakeWorklog({ fail: new ConflictError('x') });
+  const t2 = await start({ worklogService: f.svc });
+  assert.equal((await t2.post('/api/worklog/submit', { entries: [okEntry] })).status, 409);
+  assert.equal(auditRows(t2.db).length, 0);
+});
+
+test('cada usuário recebe o próprio contexto (req.ctx)', async () => {
+  const seen = [];
+  const byEmail = new Map();
+  const services = (u) => {
+    if (u.email === 'semtoken@x.com') return { missing: true };
+    if (!byEmail.has(u.email)) {
+      byEmail.set(u.email, { client: { async call(r) { seen.push([u.email, r.path]); return { status: 200, ok: true, ms: 1, data: { who: u.email } }; } } });
+    }
+    return byEmail.get(u.email);
+  };
+  const t = await makeTestApp({ services });
+  const beto = t.login({ email: 'beto@x.com' });
+  const sem = t.login({ email: 'semtoken@x.com' });
+  const a = await (await t.json('POST', '/api/call', { endpointId: 'myself' })).json();
+  const b = await (await beto.json('POST', '/api/call', { endpointId: 'myself' })).json();
+  assert.equal(a.data.who, 'ana@x.com');
+  assert.equal(b.data.who, 'beto@x.com');
+  assert.deepEqual(seen.map((x) => x[0]), ['ana@x.com', 'beto@x.com']);
+  assert.equal((await sem.json('POST', '/api/call', { endpointId: 'myself' })).status, 409);
+  const cfg = await (await beto.json('GET', '/api/config')).json();
+  assert.deepEqual(cfg, { baseUrl: 'https://x.atlassian.net', email: 'beto@x.com', tokenConfigured: true });
+});
+
+test('sem sessão as rotas da API dão 401 e não chegam ao contexto', async () => {
+  let built = 0;
+  const t = await makeTestApp({ services: () => { built++; return { client: { async call() { throw new Error('não deveria'); } } }; } });
+  for (const [m, p] of [['POST', '/api/call'], ['POST', '/api/paginate'], ['GET', '/api/config'], ['GET', '/api/worklog/tasks'], ['GET', '/api/auto']]) {
+    const res = await fetch(t.base + p, { method: m, headers: { 'Content-Type': 'application/json' }, body: m === 'POST' ? '{}' : undefined });
+    assert.equal(res.status, 401, p);
+  }
+  assert.equal(built, 0);
+});
+
+test('token inválido (tokenStatus invalid) ainda atende, mas /api/config mostra tokenConfigured false', async () => {
+  const t = await makeTestApp({ services: { client: { async call() { return { status: 200, ok: true, ms: 1, data: {} }; } }, secrets: { tokenStatus: 'invalid' } } });
+  assert.equal((await (await t.json('GET', '/api/config')).json()).tokenConfigured, false);
+  assert.equal((await t.json('POST', '/api/call', { endpointId: 'myself' })).status, 200);
 });

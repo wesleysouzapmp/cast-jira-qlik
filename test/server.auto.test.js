@@ -1,9 +1,6 @@
-import { test, after } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createApp } from '../src/server.js';
-
-const servers = [];
-after(() => servers.forEach((s) => s.close()));
+import { makeTestApp } from './helpers/app.js';
 
 function fakeScheduler() {
   const calls = [];
@@ -18,12 +15,9 @@ function fakeScheduler() {
   };
 }
 
-async function start(autoScheduler) {
-  const app = createApp({ client: { async call() { return { ok: true, status: 200, data: {} }; } }, config: { baseUrl: 'https://x', email: 'e', tokenConfigured: true }, worklogService: {}, autoScheduler });
-  const server = await new Promise((r) => { const s = app.listen(0, () => r(s)); });
-  servers.push(server);
-  const base = `http://127.0.0.1:${server.address().port}`;
-  return (method, path, body, headers = {}) => fetch(base + path, { method, headers: { 'Content-Type': 'application/json', ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
+async function start(scheduler, services = { client: { async call() { return { ok: true, status: 200, data: {} }; } }, worklogService: {} }) {
+  const t = await makeTestApp({ services, scheduler });
+  return t.json;
 }
 
 test('rotas de apontamentos automáticos', async () => {
@@ -50,4 +44,36 @@ test('apontamentos automáticos: outra origem é recusada', async () => {
   const res = await req('POST', '/api/auto/rules', { key: 'SIJUD-1', start: '09:00', minutes: 15 }, { Origin: 'https://evil.example' });
   assert.equal(res.status, 403);
   assert.equal(s.calls.length, 0);
+});
+
+test('apontamentos automáticos: gravações auditadas com via = web; leitura e erro não', async () => {
+  const s = fakeScheduler();
+  const t = await makeTestApp({ services: {}, scheduler: s });
+  await t.json('GET', '/api/auto');
+  await t.json('POST', '/api/auto/rules', { key: 'SIJUD-1', start: '09:00', minutes: 15 });
+  await t.json('POST', '/api/auto/rules', { key: 'SIJUD-1', start: 'x', minutes: 15 });
+  await t.json('PUT', '/api/auto/rules/r1', { key: 'SIJUD-1', start: '08:00', minutes: 15 });
+  await t.json('DELETE', '/api/auto/rules/r1');
+  await t.json('POST', '/api/auto/paused', { paused: true });
+  await t.json('POST', '/api/auto/run', {});
+  const rows = t.db.prepare('SELECT user_id, via, action, detail FROM audit ORDER BY id').all();
+  assert.ok(rows.every((r) => r.via === 'web' && r.user_id === t.user.id));
+  assert.deepEqual(rows.map((r) => [r.action, JSON.parse(r.detail)]), [
+    ['auto.rule.add', { ruleId: 'r1', key: 'SIJUD-1' }],
+    ['auto.rule.update', { ruleId: 'r1', key: 'SIJUD-1' }],
+    ['auto.rule.remove', { ruleId: 'r1' }],
+    ['auto.paused', { paused: true }],
+    ['auto.run', { results: 1 }],
+  ]);
+});
+
+test('apontamentos automáticos: agendador é o do usuário logado e não depende do token', async () => {
+  const porUsuario = new Map();
+  const autoRunner = { schedulerFor(id) { if (!porUsuario.has(id)) porUsuario.set(id, fakeScheduler()); return porUsuario.get(id); } };
+  const t = await makeTestApp({ services: { missing: true }, autoRunner });
+  const beto = t.login({ email: 'beto@x.com' });
+  assert.equal((await t.json('POST', '/api/auto/paused', { paused: true })).status, 200);
+  assert.equal((await beto.json('POST', '/api/auto/paused', { paused: false })).status, 200);
+  assert.deepEqual(porUsuario.get(t.user.id).calls, [['paused', true]]);
+  assert.deepEqual(porUsuario.get(beto.user.id).calls, [['paused', false]]);
 });
