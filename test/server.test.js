@@ -147,7 +147,7 @@ function fakeSupport({ fail } = {}) {
   const svc = {
     async listItems(opts) { calls.push(['list', opts]); if (fail) throw fail; return { items: [], truncated: false }; },
     async preview(keys) { calls.push(['preview', keys]); return { epics: [], rejected: [] }; },
-    async create(keys) { calls.push(['create', keys]); if (fail) throw fail; return { results: [] }; },
+    async create(keys, models) { calls.push(models === undefined ? ['create', keys] : ['create', keys, models]); if (fail) throw fail; return { results: [] }; },
   };
   return { svc, calls };
 }
@@ -182,6 +182,24 @@ test('support create remove duplicadas', async () => {
   const res = await post('/api/support/create', { keys: ['BI-1', 'BI-1'] });
   assert.equal(res.status, 200);
   assert.deepEqual(calls[0], ['create', ['BI-1']]);
+});
+
+test('support create repassa a escolha de modelos', async () => {
+  const { svc, calls } = fakeSupport();
+  const { post } = await start({ supportService: svc });
+  const res = await post('/api/support/create', { keys: ['BI-1', 'BI-2'], models: { 'BI-1': ['analise', 'analise'], 'BI-2': [] } });
+  assert.equal(res.status, 200);
+  assert.deepEqual(calls[0], ['create', ['BI-1', 'BI-2'], { 'BI-1': ['analise'], 'BI-2': [] }]);
+});
+
+test('support create recusa escolha de modelos inválida', async () => {
+  const { svc, calls } = fakeSupport();
+  const { post } = await start({ supportService: svc });
+  for (const models of [[], 'x', { 'BI-1': 'analise' }, { 'BI-1': ['outro'] }, { 'BI-9': ['analise'] }, { __proto__: null, 'BI-1': [1] }]) {
+    const res = await post('/api/support/create', { keys: ['BI-1'], models });
+    assert.equal(res.status, 400, JSON.stringify(models));
+  }
+  assert.equal(calls.length, 0);
 });
 
 test('support preview chama o serviço', async () => {

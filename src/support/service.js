@@ -32,7 +32,7 @@ function chunk(arr, n) {
 export function createSupportService({ client, baseUrl }) {
   const browse = (key) => `${baseUrl}/browse/${key}`;
   let accountId = null;
-  // Tarefas criadas por este processo: épico → { modelo: { key, id } }. Cobre o atraso do
+  // Tarefas criadas por este processo: épico → { modelo: [{ key, id }] }. Cobre o atraso do
   // índice de busca do Jira, que pode ainda não mostrar uma issue recém-criada.
   const created = new Map();
   // Fila única: dois pedidos de criação nunca rodam ao mesmo tempo.
@@ -45,15 +45,23 @@ export function createSupportService({ client, baseUrl }) {
   }
 
   const isEpic = (issue) => issue.fields?.issuetype?.hierarchyLevel === 1;
+  const keyNum = (k) => Number(k.split('-').pop());
+  const byKey = (a, b) => keyNum(a) - keyNum(b) || a.localeCompare(b);
+  function add(map, epicKey, modelId, taskKey) {
+    const entry = map.get(epicKey) ?? {};
+    const list = (entry[modelId] ??= []);
+    if (!list.includes(taskKey)) list.push(taskKey);
+    map.set(epicKey, entry);
+  }
 
   // Pede ao Jira consistência de leitura para as issues que este processo criou.
   function reconcile(epicKeys) {
-    const ids = epicKeys.flatMap((k) => Object.values(created.get(k) ?? {}).map((t) => Number(t.id))).filter(Number.isFinite);
+    const ids = epicKeys.flatMap((k) => Object.values(created.get(k) ?? {}).flat().map((t) => Number(t.id))).filter(Number.isFinite);
     return ids.length ? { reconcileIssues: ids } : {};
   }
 
-  // Mapa chave do épico → { modelId: chave da tarefa existente }.
-  // Mapa épico → { modelo: chave da tarefa }; map.info: chave da tarefa → { status, summary }.
+  // Mapa épico → { modelo: [chaves das tarefas, em ordem] }; map.info: chave da tarefa → { status, summary }.
+  // Um épico pode ter várias tarefas do mesmo modelo.
   async function findExisting(epicKeys) {
     const map = new Map();
     const info = new Map();
@@ -69,22 +77,21 @@ export function createSupportService({ client, baseUrl }) {
           const parent = t.fields?.parent?.key;
           const model = modelOfTask(t);
           if (!parent || !model) continue;
-          const entry = map.get(parent) ?? {};
-          entry[model.id] ??= t.key;
-          map.set(parent, entry);
+          add(map, parent, model.id, t.key);
           info.set(t.key, { status: t.fields?.status?.name ?? '', summary: t.fields?.summary ?? '' });
         }
         nextPageToken = data.isLast === true ? undefined : data.nextPageToken;
       } while (nextPageToken);
     }
     for (const key of epicKeys) {
-      for (const [modelId, t] of Object.entries(created.get(key) ?? {})) {
-        const entry = map.get(key) ?? {};
-        entry[modelId] ??= t.key;
-        map.set(key, entry);
-        if (!info.has(t.key)) info.set(t.key, { status: 'Aberto', summary: '' });
+      for (const [modelId, list] of Object.entries(created.get(key) ?? {})) {
+        for (const t of list) {
+          add(map, key, modelId, t.key);
+          if (!info.has(t.key)) info.set(t.key, { status: 'Aberto', summary: '' });
+        }
       }
     }
+    for (const entry of map.values()) for (const list of Object.values(entry)) list.sort(byKey);
     return Object.assign(map, { info });
   }
 
@@ -113,10 +120,8 @@ export function createSupportService({ client, baseUrl }) {
       status: i.fields?.status?.name ?? '',
       project: i.fields?.project?.key ?? '',
       url: browse(i.key),
-      existing: MODELS.filter((m) => existing.get(i.key)?.[m.id]).map((m) => {
-        const key = existing.get(i.key)[m.id];
-        return { model: m.id, key, url: browse(key), ...existing.info.get(key) };
-      }),
+      existing: MODELS.flatMap((m) => (existing.get(i.key)?.[m.id] ?? []).map((key) => (
+        { model: m.id, key, url: browse(key), ...existing.info.get(key) }))),
     }));
     return { items, truncated };
   }
@@ -145,11 +150,14 @@ export function createSupportService({ client, baseUrl }) {
     return {
       epics: epics.map((e) => {
         const have = existing.get(e.key) ?? {};
+        // Todos os modelos aparecem; vêm marcados só os que o épico ainda não tem.
         return {
           epic: e.key,
           summary: e.fields.summary,
-          toCreate: MODELS.filter((m) => !have[m.id]).map((m) => ({ model: m.id, ...renderModel(m, e), catalog: m.catalog.label })),
-          skipped: MODELS.filter((m) => have[m.id]).map((m) => ({ model: m.id, key: have[m.id] })),
+          models: MODELS.map((m) => {
+            const keys = have[m.id] ?? [];
+            return { model: m.id, ...renderModel(m, e), catalog: m.catalog.label, existing: keys, checked: keys.length === 0 };
+          }),
         };
       }),
       rejected,
@@ -161,24 +169,30 @@ export function createSupportService({ client, baseUrl }) {
     return accountId;
   }
 
-  function create(keys) {
-    const run = queue.then(() => createNow(keys));
+  // models (opcional): { épico: [modelos] } escolhidos na prévia; cria esses mesmo que já existam.
+  // Sem escolha para um épico, cria só os modelos que ele ainda não tem.
+  function create(keys, models) {
+    const run = queue.then(() => createNow(keys, models));
     queue = run.catch(() => {});
     return run;
   }
 
-  async function createNow(keys) {
+  async function createNow(keys, models = {}) {
     const { epics, rejected, existing } = await resolve(keys);
     const results = rejected.map((r) => ({ epic: r.key, model: null, status: 'error', error: r.reason }));
     if (!epics.length) return { results };
-    const acc = await myAccountId();
+    let acc;
     for (const e of epics) {
       const have = existing.get(e.key) ?? {};
+      const picked = Object.hasOwn(models, e.key) ? models[e.key] : null;
       for (const m of MODELS) {
-        if (have[m.id]) { results.push({ epic: e.key, model: m.id, status: 'skipped', key: have[m.id], url: browse(have[m.id]) }); continue; }
+        if (picked ? !picked.includes(m.id) : false) continue;
+        if (!picked && have[m.id]?.length) { const k = have[m.id][0]; results.push({ epic: e.key, model: m.id, status: 'skipped', key: k, url: browse(k) }); continue; }
+        acc ??= await myAccountId();
         const res = await client.call({ method: 'POST', path: '/rest/api/3/issue', body: buildCreateBody(m, e, acc) });
         if (res.ok && res.data?.key) {
-          created.set(e.key, { ...created.get(e.key), [m.id]: { key: res.data.key, id: res.data.id } });
+          const mine = created.get(e.key) ?? {};
+          created.set(e.key, { ...mine, [m.id]: [...(mine[m.id] ?? []), { key: res.data.key, id: res.data.id }] });
           results.push({ epic: e.key, model: m.id, status: 'created', key: res.data.key, url: browse(res.data.key) });
         } else results.push({ epic: e.key, model: m.id, status: 'error', error: res.status === 0
           ? `${jiraMessage(res.data)} — o Jira pode ter criado a tarefa mesmo assim; confira o épico antes de repetir.`

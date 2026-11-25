@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { CATALOG, getEndpoint, buildPath, isAllowed } from './catalog.js';
 import { paginate } from './paginators.js';
 import { JiraError } from './support/service.js';
+import { MODELS as SUPPORT_MODEL_LIST } from './support/models.js';
 import { ConflictError, ScopeError } from './worklog/service.js';
 import { AiError } from './worklog/ai.js';
 import { registerAuth } from './web/auth.js';
@@ -59,6 +60,21 @@ function parseKeys(keys) {
     throw new BadRequest(`Informe de 1 a ${MAX_KEYS} chaves de issue válidas (ex.: BI-2931).`);
   }
   return [...new Set(keys)];
+}
+
+// Escolha de modelos da prévia: { 'BI-1': ['analise', ...] }, só para chaves pedidas.
+const SUPPORT_MODELS = new Set(SUPPORT_MODEL_LIST.map((m) => m.id));
+function parseModels(models, keys) {
+  if (models === undefined) return undefined;
+  if (!models || typeof models !== 'object' || Array.isArray(models)) throw new BadRequest('Escolha de modelos inválida.');
+  const out = {};
+  for (const [key, list] of Object.entries(models)) {
+    if (!keys.includes(key) || !Array.isArray(list) || !list.every((m) => typeof m === 'string' && SUPPORT_MODELS.has(m))) {
+      throw new BadRequest('Escolha de modelos inválida.');
+    }
+    out[key] = [...new Set(list)];
+  }
+  return out;
 }
 
 class NotFound extends Error {}
@@ -118,8 +134,9 @@ function registerSupportRoutes(app, { audit }) {
   app.post('/api/support/preview', handle((req, ctx) => ctx.supportService.preview(parseKeys(req.body?.keys))));
   app.post('/api/support/create', handle(async (req, ctx) => {
     const keys = parseKeys(req.body?.keys);
-    const out = await ctx.supportService.create(keys);
-    auditWeb(audit, req, 'support.create', { keys });
+    const models = parseModels(req.body?.models, keys);
+    const out = await (models === undefined ? ctx.supportService.create(keys) : ctx.supportService.create(keys, models));
+    auditWeb(audit, req, 'support.create', models === undefined ? { keys } : { keys, models });
     return out;
   }));
 }

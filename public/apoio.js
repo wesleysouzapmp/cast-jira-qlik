@@ -3,7 +3,7 @@
 
 const $ = (id) => document.getElementById(id);
 const MODEL_LABEL = { analise: 'Análise', implementacao: 'Implementação' };
-const state = { items: [], selected: new Set(), results: new Map(), busy: false, collapsed: new Set() };
+const state = { items: [], selected: new Set(), results: new Map(), busy: false, collapsed: new Set(), picks: new Map() };
 
 function el(tag, props = {}, ...children) {
   const node = document.createElement(tag);
@@ -32,7 +32,8 @@ function showError(msg) {
   $('errorBox').hidden = !msg;
 }
 
-const selectable = (i) => i.isEpic && i.existing.length < 2;
+// Todo épico pode receber mais tarefas de apoio; os modelos são escolhidos na prévia.
+const selectable = (i) => i.isEpic;
 
 // Árvore: o épico na linha de cima e as tarefas de apoio dele logo abaixo, recuadas.
 function renderItems() {
@@ -46,7 +47,7 @@ function renderItems() {
   const rows = [];
   for (const i of state.items) {
     const box = el('input', { type: 'checkbox', checked: state.selected.has(i.key), disabled: !selectable(i) || state.busy });
-    box.title = !i.isEpic ? 'Só épicos recebem tarefas de apoio' : i.existing.length >= 2 ? 'As duas tarefas já existem' : '';
+    box.title = i.isEpic ? '' : 'Só épicos recebem tarefas de apoio';
     box.addEventListener('change', () => { box.checked ? state.selected.add(i.key) : state.selected.delete(i.key); updateButtons(); });
     const open = !state.collapsed.has(i.key);
     const toggle = i.isEpic
@@ -125,17 +126,28 @@ async function openPreview() {
   try {
     const p = await api('/api/support/preview', { keys });
     const body = $('previewBody');
+    // Escolha por épico: vêm marcados os modelos que o épico ainda não tem.
+    state.picks = new Map(p.epics.map((e) => [e.epic, new Set(e.models.filter((m) => m.checked).map((m) => m.model))]));
+    const summary = el('p');
+    const refresh = () => {
+      const total = [...state.picks.values()].reduce((n, set) => n + set.size, 0);
+      summary.textContent = `${total} ${total === 1 ? 'tarefa será criada' : 'tarefas serão criadas'}, com você como responsável e o épico como pai.`;
+      $('btnConfirm').disabled = total === 0;
+    };
     const blocks = p.epics.map((e) => el('section', { class: 'pv' },
       el('h3', {}, `${e.epic} - ${e.summary}`),
-      ...e.toCreate.map((t) => el('div', { class: 'pv-task' },
-        el('div', {}, el('strong', {}, t.summary)),
-        el('div', {}, t.description),
-        el('div', { class: 'muted' }, `Item do Catálogo: ${t.catalog}`))),
-      ...e.skipped.map((s) => el('div', { class: 'muted' }, `${MODEL_LABEL[s.model]}: já existe (${s.key}) — será pulada.`))));
+      ...e.models.map((t) => {
+        const pick = el('input', { type: 'checkbox', checked: t.checked });
+        pick.addEventListener('change', () => { const set = state.picks.get(e.epic); pick.checked ? set.add(t.model) : set.delete(t.model); refresh(); });
+        return el('label', { class: 'pv-task' },
+          el('div', {}, pick, ' ', el('strong', {}, t.summary)),
+          el('div', {}, t.description),
+          el('div', { class: 'muted' }, `Item do Catálogo: ${t.catalog}`),
+          t.existing.length ? el('div', { class: 'muted' }, `Já existe${t.existing.length > 1 ? 'm' : ''}: ${t.existing.join(', ')}. Marque para criar mais uma.`) : null);
+      })));
     const rejected = p.rejected.map((r) => el('div', { class: 'bad' }, `${r.key}: ${r.reason}`));
-    const total = p.epics.reduce((n, e) => n + e.toCreate.length, 0);
-    body.replaceChildren(el('p', {}, `${total} ${total === 1 ? 'tarefa será criada' : 'tarefas serão criadas'}, com você como responsável e o épico como pai.`), ...blocks, ...rejected);
-    $('btnConfirm').disabled = total === 0;
+    body.replaceChildren(summary, ...blocks, ...rejected);
+    refresh();
     $('previewDialog').showModal();
   } catch (e) {
     showError(`Não foi possível montar a prévia: ${e.message}`);
@@ -150,7 +162,8 @@ async function confirmCreate() {
   $('btnCancel').disabled = true;
   setBusy(true);
   try {
-    const { results } = await api('/api/support/create', { keys });
+    const models = Object.fromEntries([...state.picks].filter(([k]) => keys.includes(k)).map(([k, set]) => [k, [...set]]));
+    const { results } = await api('/api/support/create', { keys, models });
     state.results.clear();
     for (const r of results) state.results.set(r.epic, [...(state.results.get(r.epic) ?? []), r]);
     state.selected.clear();

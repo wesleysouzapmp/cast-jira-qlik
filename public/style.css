@@ -116,7 +116,7 @@ dialog::backdrop { background: rgb(0 0 0 / .4); }
 dialog h2 { font-size: 16px; margin: 0 0 8px; }
 .pv { border-top: 1px solid var(--border); padding: 8px 0; }
 .pv h3 { font-size: 14px; margin: 0 0 6px; }
-.pv-task { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px; display: grid; gap: 4px; }
+.pv-task { cursor: pointer; background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px; display: grid; gap: 4px; }
 @media (max-width: 900px) { .pages { order: -1; } }
 
 /* ---- Tela "Apontar horas" ---- */

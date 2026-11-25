@@ -77,16 +77,38 @@ test('listItems lança JiraError se a busca falhar', async () => {
   await assert.rejects(createSupportService({ client, baseUrl: BASE }).listItems({}), (e) => e instanceof JiraError && /Não autorizado/.test(e.message));
 });
 
-test('preview mostra o que criar e o que pular', async () => {
+test('preview lista os dois modelos e marca só os que faltam', async () => {
   const { client, calls } = fakeClient({ items: [epic('BI-1', 'X'), story('BI-5')], existing: [existingAnalise] });
   const r = await createSupportService({ client, baseUrl: BASE }).preview(['BI-1', 'BI-5', 'BI-404']);
   assert.equal(r.epics.length, 1);
-  assert.deepEqual(r.epics[0].skipped, [{ model: 'analise', key: 'QSENSE-9' }]);
-  assert.equal(r.epics[0].toCreate.length, 1);
-  assert.equal(r.epics[0].toCreate[0].summary, 'Implementação da demanda BI-1 - X');
-  assert.ok(r.epics[0].toCreate[0].catalog.includes('CAT-166'));
+  const [a, i] = r.epics[0].models;
+  assert.deepEqual([a.model, a.checked, a.existing], ['analise', false, ['QSENSE-9']]);
+  assert.deepEqual([i.model, i.checked, i.existing], ['implementacao', true, []]);
+  assert.equal(i.summary, 'Implementação da demanda BI-1 - X');
+  assert.ok(i.catalog.includes('CAT-166'));
   assert.deepEqual(r.rejected.map((x) => x.key), ['BI-5', 'BI-404']);
   assert.equal(creates(calls).length, 0);
+});
+
+test('create com escolha cria o modelo mesmo que já exista', async () => {
+  const { client, calls } = fakeClient({ items: [epic('BI-1')], existing: [existingAnalise] });
+  const r = await createSupportService({ client, baseUrl: BASE }).create(['BI-1'], { 'BI-1': ['analise'] });
+  assert.deepEqual(r.results.map((x) => [x.model, x.status, x.key]), [['analise', 'created', 'QSENSE-10']]);
+  assert.equal(creates(calls).length, 1);
+});
+
+test('create com escolha vazia não cria nada para o épico', async () => {
+  const { client, calls } = fakeClient({ items: [epic('BI-1')] });
+  const r = await createSupportService({ client, baseUrl: BASE }).create(['BI-1'], { 'BI-1': [] });
+  assert.deepEqual(r.results, []);
+  assert.equal(creates(calls).length, 0);
+});
+
+test('listItems mostra todas as tarefas de apoio do épico, inclusive repetidas', async () => {
+  const t = (key, model) => ({ key, fields: { summary: key, parent: { key: 'BI-1' }, customfield_10104: { id: '11927', child: { id: model === 'analise' ? '11930' : '12117' } } } });
+  const { client } = fakeClient({ items: [epic('BI-1')], existing: [t('QSENSE-12', 'analise'), t('QSENSE-11', 'implementacao'), t('QSENSE-9', 'analise')] });
+  const r = await createSupportService({ client, baseUrl: BASE }).listItems({ onlyEpics: true });
+  assert.deepEqual(r.items[0].existing.map((e) => [e.model, e.key]), [['analise', 'QSENSE-9'], ['analise', 'QSENSE-12'], ['implementacao', 'QSENSE-11']]);
 });
 
 test('create pula modelo existente', async () => {
