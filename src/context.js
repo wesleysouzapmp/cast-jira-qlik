@@ -1,0 +1,60 @@
+// Contexto por usuário: cada requisição/execução do agendador recebe serviços construídos
+// com as credenciais Jira DAQUELE usuário. É o ponto central do isolamento multiusuário.
+//
+// Decisões:
+//  - Sem token utilizável (tokenStatus 'missing' ou sem token) -> { missing: true }.
+//  - tokenStatus 'invalid' ainda constrói o contexto (a UI precisa mostrar o problema e
+//    permitir reenviar o token); o agendador pula quem não está 'ok' via secrets.tokenStatus.
+//  - Cache por userId; invalidate(userId) descarta (use ao trocar token/chave).
+//  - Resposta 401 do Jira: markToken(id,'invalid') + invalidate(id); a resposta segue intacta.
+//  - `secrets` expõe só { jiraEmail, tokenStatus, accountId }: nunca token nem chave Anthropic.
+import { createJiraClient } from './jiraClient.js';
+import { createSupportService } from './support/service.js';
+import { createWorklogService } from './worklog/service.js';
+import { createAiCommenter } from './worklog/ai.js';
+import { favoritesFor, autoStoreFor } from './db/userData.js';
+
+export function createContextFactory({ db, users, baseUrl, holidays, makeClient = createJiraClient, makeAi = createAiCommenter }) {
+  const cache = new Map();
+
+  function invalidate(userId) { cache.delete(userId); }
+
+  function build(userId) {
+    const s = users.getSecrets(userId);
+    if (!s.jiraToken || s.tokenStatus === 'missing') return { missing: true };
+
+    const raw = makeClient({ baseUrl, email: s.jiraEmail, token: s.jiraToken });
+    const client = {
+      ...raw,
+      async call(opts) {
+        const res = await raw.call(opts);
+        if (res && res.status === 401) {
+          users.markToken(userId, 'invalid');
+          if (cache.get(userId) === ctx) invalidate(userId);
+        }
+        return res;
+      },
+    };
+    const supportService = createSupportService({ client, baseUrl });
+    const ai = makeAi({ apiKey: s.anthropicKey || undefined });
+    const worklogService = createWorklogService({ client, baseUrl, supportService, ai, holidays });
+    const ctx = {
+      client, supportService, worklogService, ai,
+      favorites: favoritesFor(db, userId),
+      autoStore: autoStoreFor(db, userId),
+      secrets: { jiraEmail: s.jiraEmail, tokenStatus: s.tokenStatus, accountId: s.accountId },
+    };
+    return ctx;
+  }
+
+  return {
+    forUser(user) {
+      const hit = cache.get(user.id);
+      if (hit) return hit;
+      const ctx = build(user.id);
+      if (!ctx.missing) cache.set(user.id, ctx);
+      return ctx;
+    },
+    invalidate,
+  };
+}
