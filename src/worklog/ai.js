@@ -1,4 +1,5 @@
-// Comentários de apontamento gerados pelo Claude (opcional: só com ANTHROPIC_API_KEY no .env).
+// Comentários de apontamento gerados pelo Claude (opcional: só com a chave Anthropic do usuário,
+// cadastrada em Minha conta).
 // Uma chamada a cada 40 lançamentos; envia apenas épico, tarefa, data e duração de cada lançamento.
 import Anthropic from '@anthropic-ai/sdk';
 
@@ -37,7 +38,7 @@ export function createAiCommenter({ apiKey, client } = {}) {
   const api = client ?? (apiKey ? new Anthropic({ apiKey }) : null);
 
   async function generate(entries, ctxByTask) {
-    if (!api) throw new AiError('IA não configurada (ANTHROPIC_API_KEY ausente).');
+    if (!api) throw new AiError('IA não configurada: cadastre sua chave Anthropic em Minha conta.');
     const out = [];
     for (let i = 0; i < entries.length; i += BATCH) out.push(...await generateBatch(entries.slice(i, i + BATCH), ctxByTask));
     return out;

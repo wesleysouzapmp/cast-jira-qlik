@@ -177,3 +177,25 @@ test('checkDataDirOwner: recusa dono diferente, aceita igual, ignora sem getuid'
   checkDataDirOwner('/d', { stat: () => ({ uid: 2 }), getuid: () => 2 });
   checkDataDirOwner('/d', { stat: () => ({ uid: 1 }), getuid: undefined });
 });
+
+test('bootstrap importa ANTHROPIC_API_KEY do .env (sem validar, sem imprimir) e não sobrescreve depois', async () => {
+  const key = 'sk-ant-teste-0123456789abcdef';
+  const s = setup({ legacy: false, env: { ANTHROPIC_API_KEY: ` ${key} ` } });
+  const r = await runBootstrap(s);
+  const admin = s.users.byEmail('admin@x.com');
+  assert.equal(s.users.getSecrets(admin.id).anthropicKey, key);
+  assert.equal(r.anthropic, 'ok');
+  assert.ok(!s.out.join('\n').includes(key), 'a chave não pode aparecer na saída');
+  assert.ok(s.out.some((l) => /ANTHROPIC_API_KEY/.test(l) && /\.env/.test(l)), 'deve pedir para remover do .env');
+  // Segunda execução com outra chave no .env: mantém a já gravada.
+  const r2 = await runBootstrap({ ...s, env: { ...s.env, ANTHROPIC_API_KEY: 'sk-ant-outra' } });
+  assert.equal(r2.anthropic, 'ja-configurado');
+  assert.equal(s.users.getSecrets(admin.id).anthropicKey, key);
+});
+
+test('bootstrap sem ANTHROPIC_API_KEY não grava chave', async () => {
+  const s = setup({ legacy: false });
+  const r = await runBootstrap(s);
+  assert.equal(r.anthropic, 'ausente');
+  assert.equal(s.users.getSecrets(s.users.byEmail('admin@x.com').id).anthropicKey, null);
+});

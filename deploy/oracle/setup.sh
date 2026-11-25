@@ -21,11 +21,17 @@ sudo apt-get update -y
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y git curl ca-certificates openssl
 
 current_node_major() { command -v node >/dev/null 2>&1 && node -p 'process.versions.node.split(".")[0]' || echo 0; }
-if [ "$(current_node_major)" -lt 22 ]; then
+# O app usa node:sqlite (sem flag a partir do Node 22.13); exigimos o Node ${NODE_MAJOR}.
+node_has_sqlite() { node -e "require('node:sqlite')" >/dev/null 2>&1; }
+if [ "$(current_node_major)" -lt "$NODE_MAJOR" ] || ! node_has_sqlite; then
   say "Node.js ${NODE_MAJOR} (repositório oficial NodeSource)"
   curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" -o /tmp/nodesource_setup.sh
   sudo -E bash /tmp/nodesource_setup.sh
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
+fi
+if [ "$(current_node_major)" -lt "$NODE_MAJOR" ] || ! node_has_sqlite; then
+  echo "Node.js $(node --version 2>/dev/null || echo ausente) não serve: é preciso o Node.js >= ${NODE_MAJOR} com node:sqlite."
+  exit 1
 fi
 echo "node $(node --version), npm $(npm --version)"
 

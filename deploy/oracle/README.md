@@ -65,15 +65,22 @@ Com o app instalado, crie o primeiro administrador (o comando roda como `castjir
 cd /opt/cast-jira-qlik
 sudo -u castjira node src/admin.js bootstrap --email voce@exemplo.com --nome "Seu Nome"
 ```
-Ele imprime um link de convite de uso único: abra-o no navegador para definir a senha. Depois, em **Minha conta**, cadastre o seu token do Jira (gere em <https://id.atlassian.com/manage-profile/security/api-tokens>).
+Ele pede a senha do administrador no próprio terminal (duas vezes; nada aparece enquanto você digita; mínimo de 10 caracteres). Para rodar sem perguntas (automação), a senha pode vir da variável de ambiente `ADMIN_PASSWORD`. Depois, entre no app com esse e-mail e senha e, em **Minha conta**, cadastre o seu token do Jira (gere em <https://id.atlassian.com/manage-profile/security/api-tokens>) e, se quiser os comentários gerados pelo Claude, a sua chave Anthropic.
 
-Outros campos do `.env`, como a chave Anthropic: `sudo nano /opt/cast-jira-qlik/.env` (Ctrl+O e Enter para salvar, Ctrl+X para sair). Depois, `sudo systemctl restart cast-jira`.
+A chave Anthropic é de cada usuário e fica em **Minha conta** (não no `.env`). Outros campos do `.env`: `sudo nano /opt/cast-jira-qlik/.env` (Ctrl+O e Enter para salvar, Ctrl+X para sair). Depois, `sudo systemctl restart cast-jira`.
 
 ### Migrar da versão de um usuário (VM que já existia)
 
 1. Atualize **baixando o script de novo** (o `setup.sh` que ficou na VM é da versão antiga e não gera a `APP_SECRET_KEY`; rodá-lo puxaria o código novo e o serviço não subiria): `curl -fsSL https://raw.githubusercontent.com/wesleysouzapmp/cast-jira-qlik/main/deploy/oracle/setup.sh -o setup.sh && bash setup.sh` (para testar outra branch: `BRANCH=nome bash setup.sh`). Ele gera a `APP_SECRET_KEY` e cria a pasta `data/`. Os `agendamentos*.json` e `favoritos.json` continuam onde estão.
-2. **Logo em seguida**, rode o `bootstrap` (comando acima). Ele lê `JIRA_EMAIL` e `JIRA_API_TOKEN` do `.env`, cria o admin com esse token e importa `agendamentos.json`, `agendamentos-log.json` e `favoritos.json`. Faça isso logo após atualizar: assim o agendador diário continua rodando para você, com os mesmos dados. Rodar de novo não duplica nada.
-3. Confirme que está tudo certo e **apague** `JIRA_EMAIL` e `JIRA_API_TOKEN` do `.env` (`sudo nano /opt/cast-jira-qlik/.env`): o servidor não usa mais essas variáveis.
+2. **Logo em seguida**, pare o serviço, rode o `bootstrap` e suba o serviço de novo:
+   ```bash
+   cd /opt/cast-jira-qlik
+   sudo systemctl stop cast-jira
+   sudo -u castjira node src/admin.js bootstrap --email voce@exemplo.com --nome "Seu Nome"
+   sudo systemctl start cast-jira
+   ```
+   Ele lê `JIRA_EMAIL` e `JIRA_API_TOKEN` do `.env`, cria o admin com esse token, importa a `ANTHROPIC_API_KEY` do `.env` (se houver) como a chave Anthropic do admin e importa `agendamentos.json`, `agendamentos-log.json` e `favoritos.json`. Faça isso logo após atualizar: assim o agendador diário continua rodando para você, com os mesmos dados. Rodar de novo não duplica nada.
+3. Confirme que está tudo certo e **apague** `JIRA_EMAIL`, `JIRA_API_TOKEN` e `ANTHROPIC_API_KEY` do `.env` (`sudo nano /opt/cast-jira-qlik/.env`): o servidor não usa mais essas variáveis (a chave Anthropic é importada uma única vez; depois, cada um gerencia a sua em **Minha conta**).
 
 Numa VM nova, para levar os arquivos antigos do PC, envie-os antes do `bootstrap`:
 ```powershell
@@ -160,7 +167,9 @@ Envie o link impresso (uso único) para a pessoa. Ela define a senha e cadastra 
 
 ## 9. Conector no claude.ai
 
-Cada pessoa, no claude.ai: **Configurações → Conectores → Adicionar conector personalizado** e informe a URL `https://SEU_HOST/mcp`. Na primeira vez, o claude.ai abre a tela de login do app para autorizar o acesso.
+Cada pessoa, no claude.ai: **Configurações → Conectores → Adicionar conector personalizado** e informe a URL `https://SEU_HOST/mcp`. Na primeira vez, o claude.ai abre a tela de login do app para autorizar o acesso. A tela mostra o destino (ex.: `claude.ai`): só aprove se for o Claude.
+
+Por segurança, o app só aceita registrar conectores cujo endereço de retorno (redirect_uri) seja HTTPS em `claude.ai` ou `claude.com` (ou `localhost`, para testes). Para liberar outro cliente MCP, ponha os hosts no `.env`, separados por vírgula (a lista substitui a padrão, então repita `claude.ai,claude.com` se quiser mantê-los): `MCP_REDIRECT_HOSTS=claude.ai,claude.com,outro.exemplo.com`, e depois `sudo systemctl restart cast-jira`.
 
 ## Dia a dia
 

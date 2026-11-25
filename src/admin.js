@@ -96,6 +96,17 @@ async function importJira({ users, adminId, env, makeJiraClient, baseUrl, log })
   return 'ok';
 }
 
+// ANTHROPIC_API_KEY do modo antigo: gravada (cifrada) para o admin, sem validar e sem imprimir.
+// Não sobrescreve uma chave já cadastrada (rodar de novo é seguro).
+function importAnthropic({ users, adminId, env, log }) {
+  const key = env.ANTHROPIC_API_KEY?.trim();
+  if (!key) return 'ausente';
+  if (users.getSecrets(adminId).anthropicKey) { log('Anthropic: chave já configurada para o admin.'); return 'ja-configurado'; }
+  users.setAnthropic(adminId, key);
+  log('Anthropic: ANTHROPIC_API_KEY do .env gravada (cifrada) para o admin. Remova-a do .env.');
+  return 'ok';
+}
+
 function hasAppData(db, userId) {
   const n = (sql) => db.prepare(sql).get(userId).n;
   return n('SELECT COUNT(*) AS n FROM rules WHERE user_id = ?') > 0
@@ -164,15 +175,16 @@ export async function runBootstrap({
   }
 
   const jira = await importJira({ users, adminId: admin.id, env, makeJiraClient, baseUrl, log });
+  const anthropic = importAnthropic({ users, adminId: admin.id, env, log });
   const imported = importFiles({ db, adminId: admin.id, rootDir, log, force: Boolean(args.forcar) });
 
   const host = env.PUBLIC_HOST?.trim();
   log('');
   log('Próximos passos:');
   log(`  1. Entre em ${host ? `https://${host}/` : 'http://127.0.0.1:3100/ (ou o endereço público)'} com ${admin.email}.`);
-  log('  2. Remova JIRA_EMAIL e JIRA_API_TOKEN do .env (o token agora fica cifrado no banco).');
+  log('  2. Remova JIRA_EMAIL, JIRA_API_TOKEN e ANTHROPIC_API_KEY do .env (agora ficam cifrados no banco).');
   log('  3. Convide os demais usuários: node src/admin.js invite');
-  return { admin, created, jira, imported };
+  return { admin, created, jira, anthropic, imported };
 }
 
 export function runInvite({ users, sessions, env = process.env, args = {}, log = console.log }) {

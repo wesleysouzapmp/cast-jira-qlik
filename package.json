@@ -4,6 +4,9 @@
   "private": true,
   "description": "App local para testar as APIs do Jira Cloud antes de conectar no Qlik Sense",
   "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
   "scripts": {
     "start": "node src/index.js",
     "test": "node --test"

@@ -1,4 +1,4 @@
-# Modelo do serviço; o setup.sh troca __USER__, __DIR__ e __NODE__ e instala em /etc/systemd/system/cast-jira.service.
+# Modelo do serviço; o setup.sh troca __USER__, __DIR__, __DATA_DIR__ e __NODE__ e instala em /etc/systemd/system/cast-jira.service.
 [Unit]
 Description=cast-jira-qlik (tarefas de apoio, apontamentos e agendamentos no Jira)
 After=network-online.target
@@ -14,10 +14,10 @@ Restart=always
 RestartSec=10
 Environment=NODE_ENV=production
 
-# Endurecimento: só a pasta do app é gravável (inclui data/, onde fica o banco app.db).
+# Endurecimento: só a pasta do app e a pasta de dados (DATA_DIR, onde fica o banco app.db) são graváveis.
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=__DIR__
+ReadWritePaths=__DIR__ __DATA_DIR__
 ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true
