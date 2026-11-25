@@ -4,7 +4,8 @@ import { parseDuration, formatDuration, splitTotal, periodIndicators, businessDa
 import { createCalendar } from './calendar.js';
 import { openDayPanel } from './daypanel.js';
 import { setupAuto } from './auto.js';
-import { onlyInExecution, IN_EXECUTION } from '/lib/taskFilter.js';
+import { onlyWorkable, WORKABLE } from '/lib/taskFilter.js';
+const WORKABLE_TEXT = WORKABLE.join(' ou ');
 
 const $ = (id) => document.getElementById(id);
 const MODEL_LABEL = { analise: 'Análise', implementacao: 'Implementação', avulsa: 'Avulsa' };
@@ -105,10 +106,10 @@ function hoursControls(ui, key) {
   return { check, rest: [hours, mode, est] };
 }
 
-// Lembrete: o que ficou fora da lista por não estar Em Execução.
+// Lembrete: o que ficou fora da lista por não estar Em Execução nem Aberto.
 function renderExecNote() {
   const box = $('execNote');
-  const intro = `Só aparecem tarefas de apoio com status ${IN_EXECUTION}. Para apontar em outra, mude o status dela para ${IN_EXECUTION} no Jira e recarregue a página.`;
+  const intro = `Só aparecem tarefas de apoio com status ${WORKABLE_TEXT} (as em Aberto passam para Em Execução ao gravar). Para apontar em outra, mude o status dela para Em Execução no Jira e recarregue a página.`;
   if (!state.hidden.length) { box.replaceChildren(intro); return; }
   const n = state.hidden.length;
   box.replaceChildren(intro, ' ', el('details', { class: 'inline-details' },
@@ -122,7 +123,7 @@ function renderEpics() {
   const box = $('epics');
   if (!state.epics.length) {
     box.replaceChildren(el('p', { class: 'muted' }, state.hidden.length
-      ? `Nenhuma tarefa de apoio ${IN_EXECUTION}. Mude o status no Jira para apontar nela.`
+      ? `Nenhuma tarefa de apoio ${WORKABLE_TEXT}. Mude o status no Jira para apontar nela.`
       : 'Nenhum épico em aberto com tarefas de apoio. Crie as tarefas na página “Tarefas de apoio”.'));
     return;
   }
@@ -328,8 +329,8 @@ async function loadTasks() {
   try {
     const r = await api('/api/worklog/tasks');
     state.allEpics = r.epics.filter((e) => e.tasks.length);
-    // Para apontar, só tarefas de apoio Em Execução; as demais ficam no lembrete.
-    ({ epics: state.epics, hidden: state.hidden } = onlyInExecution(state.allEpics));
+    // Para apontar, só tarefas de apoio Em Execução ou Aberto; as demais ficam no lembrete.
+    ({ epics: state.epics, hidden: state.hidden } = onlyWorkable(state.allEpics));
     state.aiEnabled = r.aiEnabled;
   } catch (e) {
     state.epics = [];
@@ -374,7 +375,7 @@ async function addLoose() {
   if (state.loose.some((t) => t.key === key)) { looseMsg(`${key} já está na lista.`); return; }
   if (state.epics.some((e) => e.tasks.some((t) => t.key === key))) { looseMsg(`${key} é uma tarefa de apoio; use a lista acima.`, true); return; }
   const off = state.hidden.find((h) => h.key === key);
-  if (off) { looseMsg(`${key} é uma tarefa de apoio em ${off.status}; mude para ${IN_EXECUTION} no Jira para apontar nela.`, true); return; }
+  if (off) { looseMsg(`${key} é uma tarefa de apoio em ${off.status}; mude para Em Execução no Jira para apontar nela.`, true); return; }
   $('looseAdd').disabled = true;
   looseMsg('Consultando o Jira…');
   try {
