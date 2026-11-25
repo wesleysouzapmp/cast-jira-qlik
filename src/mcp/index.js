@@ -7,7 +7,7 @@
 //    do static/handlers finais. As rotas OAuth e /mcp não usam cookie (requireUser só barra
 //    /api/* e *.html).
 //  - rateLimit: repassado às opções de cada handler do SDK (false desliga; padrão do SDK).
-//  - serverDeps: repassado a createMcpServer (Task 13 registra as ferramentas lá).
+//  - serverDeps: repassado a createMcpServer, que registra as ferramentas (src/mcp/tools.js).
 import { createRequire } from 'node:module';
 import express from 'express';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -15,6 +15,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { HttpError, route, auditLog } from '../web/route.js';
+import { registerTools } from './tools.js';
 
 const { version } = createRequire(import.meta.url)('../../package.json');
 
@@ -27,12 +28,18 @@ export function publicUrlFor(config, port) {
   return `http://127.0.0.1:${port}`;
 }
 
-// Um servidor por requisição (modo sem estado). deps = { ...serverDeps, user, auth }: `user` é
-// { id, name, email, role } de quem chama e `auth` o AuthInfo do Bearer (extra.userId).
-// Sem ferramentas por enquanto: a Task 13 as registra aqui a partir de deps.
-// eslint-disable-next-line no-unused-vars
+// Um servidor por requisição (modo sem estado). deps = { ...serverDeps, user, auth, publicUrl }:
+// `user` é { id, name, email, role } de quem chama e `auth` o AuthInfo do Bearer (extra.userId).
+// serverDeps (de createApp): { contexts, holidayProvider, autoRunner, now }. Sem `user` (ex.: testes
+// de unidade), o servidor sobe sem ferramentas.
 export function createMcpServer(deps = {}) {
-  return new McpServer({ name: 'cast-jira', version });
+  const server = new McpServer({ name: 'cast-jira', version });
+  const { user, contexts, holidayProvider, autoRunner, publicUrl, now } = deps;
+  if (user) {
+    const ctx = contexts ? contexts.forUser(user) : { missing: true };
+    registerTools(server, { user, ctx, holidays: holidayProvider, autoRunner, publicUrl, ...(now ? { now } : {}) });
+  }
+  return server;
 }
 
 export function mountMcp(app, { provider, publicUrl, users, audit, rateLimit, serverDeps = {} }) {
@@ -78,7 +85,7 @@ export function mountMcp(app, { provider, publicUrl, users, audit, rateLimit, se
   app.post('/mcp', bearer, async (req, res) => {
     const u = users.byId(req.auth.extra.userId);
     const user = { id: u.id, name: u.name, email: u.email, role: u.role };
-    const server = createMcpServer({ ...serverDeps, user, auth: req.auth });
+    const server = createMcpServer({ ...serverDeps, user, auth: req.auth, publicUrl: base });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on('close', () => { transport.close(); server.close(); });
     try {

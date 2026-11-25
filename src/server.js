@@ -388,7 +388,10 @@ export function createApp({
   registerAdmin(app, { users, sessions, contexts, config, audit, oauth });
   if (mcp) {
     const provider = createOAuthProvider({ oauth, users, now });
-    mountMcp(app, { ...mcp, provider, users, audit });
+    mountMcp(app, {
+      ...mcp, provider, users, audit,
+      serverDeps: { contexts, holidayProvider, autoRunner, ...(now ? { now } : {}), ...mcp.serverDeps },
+    });
   }
 
   function guard(handler) {
