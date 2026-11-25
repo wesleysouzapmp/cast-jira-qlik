@@ -338,6 +338,9 @@ export function createApp({
   app.set('case sensitive routing', true);
   const stripPort = (h) => String(h ?? '').replace(/:\d+$/, '').toLowerCase();
   const publicHost = stripPort(config.publicHost);
+  // Atrás do proxy reverso (Caddy no mesmo host): req.ip vem do X-Forwarded-For só quando a
+  // conexão chega pelo loopback. Também evita o erro de validação do express-rate-limit do SDK.
+  if (publicHost) app.set('trust proxy', 'loopback');
 
   // Cabeçalhos de segurança em todas as respostas.
   app.use((_req, res, next) => {

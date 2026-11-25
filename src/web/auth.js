@@ -26,7 +26,9 @@ function parseCookies(header) {
 }
 
 const publicUser = (u) => ({ id: u.id, name: u.name, email: u.email, role: u.role });
-const clientIp = (req) => req.socket?.remoteAddress ?? 'unknown';
+// req.ip respeita o 'trust proxy' (ligado só com publicHost, e só para conexões de loopback):
+// atrás do Caddy cada cliente tem o próprio limite; sem proxy é o endereço do socket.
+const clientIp = (req) => req.ip ?? req.socket?.remoteAddress ?? 'unknown';
 
 // Registra as rotas de autenticação e devolve o middleware requireUser.
 // Ordem esperada pelo chamador: express.json() antes; requireUser depois das rotas públicas.

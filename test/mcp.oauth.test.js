@@ -284,3 +284,19 @@ test('endpoints OAuth e /mcp aceitam Origin de outro site (não usam cookie)', a
   const csrf = await t.json('POST', `/api/consentimento/${pedido}`, { permitir: true }, { Origin: 'https://evil.example' });
   assert.equal(csrf.status, 403);
 });
+
+test('atrás do proxy (publicHost) o rate limit do SDK aceita X-Forwarded-For sem erro de validação', async () => {
+  const t = await makeTestApp({ mcp: true, config: { publicHost: 'cast-horas.duckdns.org' } });
+  const errors = [];
+  const orig = console.error;
+  console.error = (...a) => { errors.push(a.map(String).join(' ')); };
+  try {
+    const res = await fetch(`${t.base}/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '203.0.113.7' },
+      body: JSON.stringify({ client_name: 'Claude', redirect_uris: [REDIRECT], token_endpoint_auth_method: 'none' }),
+    });
+    assert.equal(res.status, 201);
+  } finally { console.error = orig; }
+  assert.deepEqual(errors.filter((e) => /X-Forwarded-For|ERR_ERL/.test(e)), []);
+});

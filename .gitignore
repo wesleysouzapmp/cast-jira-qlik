@@ -7,3 +7,5 @@ favoritos.json
 agendamentos.json
 agendamentos-log.json
 .npm/
+# Banco SQLite e dados do servidor (DATA_DIR padrão)
+data/

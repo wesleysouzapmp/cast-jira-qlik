@@ -257,3 +257,17 @@ test('todos os public/*.js têm sintaxe válida', () => {
     assert.equal(r.status, 0, `${f}: ${r.stderr}`);
   }
 });
+
+test('atrás do proxy (publicHost) cada IP de X-Forwarded-For tem o próprio limite de login', async () => {
+  const { post } = await start({ publicHost: 'cast-horas.duckdns.org' });
+  const xff = (ip) => ({ 'X-Forwarded-For': ip });
+  for (let i = 0; i < 5; i++) assert.equal((await post('/api/login', { email: 'ana@x.com', senha: 'errada-errada' }, xff('203.0.113.1'))).status, 401);
+  assert.equal((await post('/api/login', { email: 'ana@x.com', senha: 'errada-errada' }, xff('203.0.113.1'))).status, 429);
+  assert.equal((await post('/api/login', { email: 'ana@x.com', senha: 'errada-errada' }, xff('203.0.113.2'))).status, 401);
+});
+
+test('sem publicHost o X-Forwarded-For é ignorado no limite de login', async () => {
+  const { post } = await start();
+  for (let i = 0; i < 5; i++) assert.equal((await post('/api/login', { email: 'ana@x.com', senha: 'errada-errada' }, { 'X-Forwarded-For': `203.0.113.${i + 10}` })).status, 401);
+  assert.equal((await post('/api/login', { email: 'ana@x.com', senha: 'errada-errada' }, { 'X-Forwarded-For': '203.0.113.99' })).status, 429);
+});
