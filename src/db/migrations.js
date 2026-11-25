@@ -143,6 +143,12 @@ export const MIGRATIONS = [
   `
   ALTER TABLE invites ADD COLUMN user_id TEXT REFERENCES users(id) ON DELETE CASCADE;
   `,
+  // OAuth do MCP: metadados completos do cliente (SDK), resource do código e emissão do token.
+  `
+  ALTER TABLE oauth_clients ADD COLUMN metadata TEXT;
+  ALTER TABLE oauth_codes ADD COLUMN resource TEXT;
+  ALTER TABLE oauth_tokens ADD COLUMN created_at INTEGER;
+  `,
 ];
 
 export function migrate(db) {
