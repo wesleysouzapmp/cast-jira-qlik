@@ -4,11 +4,12 @@ import { parseDuration, formatDuration, splitTotal, periodIndicators, businessDa
 import { createCalendar } from './calendar.js';
 import { openDayPanel } from './daypanel.js';
 import { setupAuto } from './auto.js';
+import { onlyInExecution, IN_EXECUTION } from '/lib/taskFilter.js';
 
 const $ = (id) => document.getElementById(id);
 const MODEL_LABEL = { analise: 'Análise', implementacao: 'Implementação', avulsa: 'Avulsa' };
 const STORE_KEY = 'apontar.schedule';
-const state = { epics: [], aiEnabled: false, entries: [], ui: new Map(), busy: false, loose: [], looseUi: { hours: {}, checked: {}, perDay: {} } };
+const state = { epics: [], allEpics: [], hidden: [], aiEnabled: false, entries: [], ui: new Map(), busy: false, loose: [], looseUi: { hours: {}, checked: {}, perDay: {} } };
 
 function el(tag, props = {}, ...children) {
   const node = document.createElement(tag);
@@ -104,11 +105,25 @@ function hoursControls(ui, key) {
   return { check, rest: [hours, mode, est] };
 }
 
+// Lembrete: o que ficou fora da lista por não estar Em Execução.
+function renderExecNote() {
+  const box = $('execNote');
+  const intro = `Só aparecem tarefas de apoio com status ${IN_EXECUTION}. Para apontar em outra, mude o status dela para ${IN_EXECUTION} no Jira e recarregue a página.`;
+  if (!state.hidden.length) { box.replaceChildren(intro); return; }
+  const n = state.hidden.length;
+  box.replaceChildren(intro, ' ', el('details', { class: 'inline-details' },
+    el('summary', {}, `${n} ${n === 1 ? 'tarefa fora da lista' : 'tarefas fora da lista'}`),
+    el('ul', {}, ...state.hidden.map((h) => el('li', {}, `${h.key} (${h.status || 'sem status'}) — épico ${h.epicKey}`)))));
+}
+
 function renderEpics() {
   renderLoose();
+  renderExecNote();
   const box = $('epics');
   if (!state.epics.length) {
-    box.replaceChildren(el('p', { class: 'muted' }, 'Nenhum épico em aberto com tarefas de apoio. Crie as tarefas na página “Tarefas de apoio”.'));
+    box.replaceChildren(el('p', { class: 'muted' }, state.hidden.length
+      ? `Nenhuma tarefa de apoio ${IN_EXECUTION}. Mude o status no Jira para apontar nela.`
+      : 'Nenhum épico em aberto com tarefas de apoio. Crie as tarefas na página “Tarefas de apoio”.'));
     return;
   }
   box.replaceChildren(...state.epics.map((e) => {
@@ -312,10 +327,14 @@ async function submit() {
 async function loadTasks() {
   try {
     const r = await api('/api/worklog/tasks');
-    state.epics = r.epics.filter((e) => e.tasks.length);
+    state.allEpics = r.epics.filter((e) => e.tasks.length);
+    // Para apontar, só tarefas de apoio Em Execução; as demais ficam no lembrete.
+    ({ epics: state.epics, hidden: state.hidden } = onlyInExecution(state.allEpics));
     state.aiEnabled = r.aiEnabled;
   } catch (e) {
     state.epics = [];
+    state.allEpics = [];
+    state.hidden = [];
     showError(`Não foi possível carregar as tarefas: ${e.message}`);
   }
   renderEpics();
@@ -354,6 +373,8 @@ async function addLoose() {
   if (!key) return;
   if (state.loose.some((t) => t.key === key)) { looseMsg(`${key} já está na lista.`); return; }
   if (state.epics.some((e) => e.tasks.some((t) => t.key === key))) { looseMsg(`${key} é uma tarefa de apoio; use a lista acima.`, true); return; }
+  const off = state.hidden.find((h) => h.key === key);
+  if (off) { looseMsg(`${key} é uma tarefa de apoio em ${off.status}; mude para ${IN_EXECUTION} no Jira para apontar nela.`, true); return; }
   $('looseAdd').disabled = true;
   looseMsg('Consultando o Jira…');
   try {
@@ -447,7 +468,7 @@ function setupCalendar() {
       dialog: $('dayPanel'),
       date,
       entries,
-      tasks: state.epics.flatMap((e) => e.tasks.map((t) => ({ key: t.key, model: t.model, epicKey: e.key }))),
+      tasks: state.allEpics.flatMap((e) => e.tasks.map((t) => ({ key: t.key, model: t.model, epicKey: e.key }))),
       limit: parseDuration($('dailyLimit').value) ?? DEFAULT_SCHEDULE.dailyLimit,
       onSaved: () => { calendar.reload(); loadTasks(); },
       onUsePeriod: (d) => { $('from').value = d; $('to').value = d; calendar.render(); },
