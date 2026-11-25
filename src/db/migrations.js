@@ -149,6 +149,22 @@ export const MIGRATIONS = [
   ALTER TABLE oauth_codes ADD COLUMN resource TEXT;
   ALTER TABLE oauth_tokens ADD COLUMN created_at INTEGER;
   `,
+  // Catálogo de UST (global, mantido pelo admin): CAT + tamanho → UST; meta guarda a última alteração.
+  `
+  CREATE TABLE ust_catalog (
+    cat         TEXT NOT NULL,
+    size        TEXT NOT NULL CHECK (size IN ('P','M','G','Hora')),
+    ust         REAL NOT NULL CHECK (ust >= 0),
+    task        TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (cat, size)
+  );
+  CREATE TABLE ust_catalog_meta (
+    id         INTEGER PRIMARY KEY CHECK (id = 1),
+    updated_at INTEGER NOT NULL,
+    updated_by TEXT REFERENCES users(id) ON DELETE SET NULL
+  );
+  `,
 ];
 
 export function migrate(db) {

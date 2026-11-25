@@ -9,7 +9,7 @@ import { MIGRATIONS } from '../src/db/migrations.js';
 const TABELAS = [
   'users', 'user_secrets', 'sessions', 'invites', 'rules', 'rule_done', 'rule_log',
   'user_settings', 'favorites', 'oauth_clients', 'oauth_codes', 'oauth_tokens', 'audit',
-  'schema_version',
+  'ust_catalog', 'ust_catalog_meta', 'schema_version',
 ];
 
 test('openDb(): cria todas as tabelas e índices', () => {

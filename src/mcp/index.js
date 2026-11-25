@@ -31,15 +31,15 @@ export function publicUrlFor(config, port) {
 
 // Um servidor por requisição (modo sem estado). deps = { ...serverDeps, user, auth, publicUrl }:
 // `user` é { id, name, email, role } de quem chama e `auth` o AuthInfo do Bearer (extra.userId).
-// serverDeps (de createApp): { contexts, holidayProvider, autoRunner, now }; mountMcp acrescenta
+// serverDeps (de createApp): { contexts, holidayProvider, autoRunner, catalog, now }; mountMcp acrescenta
 // `previews` (createPreviewStore único do processo) e `audit`. Sem `user` (ex.: testes de unidade),
 // o servidor sobe sem ferramentas.
 export function createMcpServer(deps = {}) {
   const server = new McpServer({ name: 'cast-jira', version });
-  const { user, contexts, holidayProvider, autoRunner, publicUrl, now, previews, audit } = deps;
+  const { user, contexts, holidayProvider, autoRunner, publicUrl, now, previews, audit, catalog } = deps;
   if (user) {
     const ctx = contexts ? contexts.forUser(user) : { missing: true };
-    registerTools(server, { user, ctx, holidays: holidayProvider, autoRunner, publicUrl, previews, audit, ...(now ? { now } : {}) });
+    registerTools(server, { user, ctx, holidays: holidayProvider, autoRunner, publicUrl, previews, audit, catalog, ...(now ? { now } : {}) });
   }
   return server;
 }

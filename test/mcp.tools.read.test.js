@@ -231,3 +231,37 @@ test('usuário desativado depois de emitir o token → 401 no /mcp', async () =>
   assert.equal(res.status, 401);
   await assert.rejects(connect(t, token));
 });
+
+test('indicadores traz as UST do período (concluídas e em andamento) com o catálogo do app', async () => {
+  const seen = [];
+  const services = () => {
+    const ctx = jiraCtx();
+    ctx.worklogService.ustSummary = async (args) => {
+      seen.push(args);
+      return { from: args.from, to: args.to, sizeField: 'Tamanho', concluded: { ust: 16, tasks: [{ key: 'QSENSE-1', cat: 'CAT-105', size: 'M', ust: 8 }] }, inProgress: { ust: 0.4, tasks: [] }, problems: [{ key: 'QSENSE-2', problem: 'sem Tamanho' }] };
+    };
+    return ctx;
+  };
+  const t = await setup({ services });
+  await t.json('PUT', '/api/admin/ust/catalogo', { items: [{ cat: 'CAT-105', size: 'M', ust: 8 }] });
+  const client = await connect(t);
+  const r = parse(await call(client, 'indicadores', { fechamento: '2026-11' }));
+  assert.equal(r.executadasMin, 90);
+  assert.deepEqual(r.ust, {
+    concluidas: 16, emAndamento: 0.4,
+    tarefasConcluidas: [{ tarefa: 'QSENSE-1', cat: 'CAT-105', tamanho: 'M', ust: 8 }],
+    tarefasEmAndamento: [],
+    pendencias: [{ tarefa: 'QSENSE-2', problema: 'sem Tamanho' }],
+  });
+  assert.equal(seen[0].catalog.length, 1);
+  await client.close();
+});
+
+test('indicadores: falha nas UST não derruba as horas', async () => {
+  const t = await setup();
+  const client = await connect(t);
+  const r = parse(await call(client, 'indicadores', { fechamento: '2026-11' }));
+  assert.equal(r.executadasMin, 90);
+  assert.match(r.ust.erro, /catálogo de UST está vazio/);
+  await client.close();
+});

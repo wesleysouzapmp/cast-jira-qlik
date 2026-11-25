@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Catálogo de UST</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Catálogo de UST</div>
+    <nav class="pages" aria-label="Páginas">
+      <a href="index.html">API Tester</a>
+      <a href="apoio.html">Tarefas de apoio</a>
+      <a href="apontar.html">Apontar horas</a>
+      <a href="catalogo.html" aria-current="page">Catálogo de UST</a>
+    </nav>
+  </header>
+
+  <main class="page">
+    <section class="panel">
+      <div class="actions"><h1>Catálogo de UST</h1><span id="meta" class="muted"></span></div>
+      <p class="help">Valor em UST de cada item do catálogo (CAT) por tamanho. O indicador “UST” em Apontar horas usa o <strong>Item do Catálogo</strong> e o <strong>Tamanho</strong> da aba Apontamentos de cada tarefa para achar a linha certa. Itens por hora (Tamanho “Hora”) valem UST × horas apontadas.</p>
+      <div id="editBar" class="actions" hidden>
+        <label class="button-like">Importar planilha (.xlsx)<input type="file" id="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden></label>
+        <button id="btnAdd" type="button">Adicionar linha</button>
+        <button id="btnSave" type="button" class="primary" disabled>Salvar alterações</button>
+        <button id="btnUndo" type="button" disabled>Descartar</button>
+        <span id="dirty" class="muted"></span>
+      </div>
+      <div id="importBox" class="reminder help" hidden></div>
+      <div id="errorBox" class="error" hidden></div>
+      <div class="actions"><input id="filter" placeholder="Filtrar por CAT ou texto" aria-label="Filtrar"><span id="count" class="muted"></span></div>
+      <div class="table-wrap">
+        <table class="items" id="table">
+          <thead><tr><th>CAT</th><th>Tarefa</th><th>Tamanho</th><th>Descrição</th><th>UST</th><th></th></tr></thead>
+          <tbody id="rows"><tr><td colspan="6" class="muted">Carregando…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <script src="session.js"></script>
+  <script type="module" src="catalogo.js"></script>
+</body>
+</html>

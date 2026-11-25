@@ -115,7 +115,7 @@ function hhmm(min) {
   return `${sign}${String(Math.floor(a / 60)).padStart(2, '0')}:${String(a % 60).padStart(2, '0')}`;
 }
 
-export function registerTools(server, { user, ctx, holidays, autoRunner, publicUrl, previews, audit, now = () => Date.now() } = {}) {
+export function registerTools(server, { user, ctx, holidays, autoRunner, publicUrl, previews, audit, catalog, now = () => Date.now() } = {}) {
   const conta = `${String(publicUrl ?? '').replace(/\/+$/, '')}/conta.html`;
   const today = () => localNow(now()).date;
 
@@ -223,7 +223,10 @@ export function registerTools(server, { user, ctx, holidays, autoRunner, publicU
       + 'previstas (limite diário × dias úteis), executadas e saldo (previstas − executadas), em minutos e em HH:MM. '
       + 'Informe de e ate (AAAA-MM-DD, até 62 dias) ou fechamento "AAAA-MM": do dia 21 do mês anterior '
       + 'ao dia 20 do mês informado. Fuso -03:00. O limite diário padrão é 8h; a pessoa pode informar em '
-      + 'limite_diario o limite que usa na tela (ex.: "6h", "7h 30m", "450m").',
+      + 'limite_diario o limite que usa na tela (ex.: "6h", "7h 30m", "450m"). '
+      + 'Traz também as UST do período (ust): concluidas = tarefas suas que foram para Concluído no período; '
+      + 'emAndamento = tarefas abertas com horas suas no período; a UST vem do Item do Catálogo + Tamanho da tarefa '
+      + 'no catálogo de UST do app (itens por hora: UST × horas apontadas). pendencias lista tarefas que não puderam ser calculadas.',
     inputSchema: {
       de: dateArg('Data inicial').optional(),
       ate: dateArg('Data final').optional(),
@@ -260,8 +263,25 @@ export function registerTools(server, { user, ctx, holidays, autoRunner, publicU
       diasUteis: r.businessDays, diasTrabalhados: r.worked, diasATrabalhar: r.toWork,
       previstasMin: r.expectedMin, executadasMin: r.executedMin, saldoMin: r.balanceMin,
       previstas: hhmm(r.expectedMin), executadas: hhmm(r.executedMin), saldo: hhmm(r.balanceMin),
+      ust: await ustOfPeriod(c, range),
     };
   }));
+
+  // UST do período para o indicadores; uma falha aqui não derruba os indicadores de horas.
+  async function ustOfPeriod(c, range) {
+    try {
+      const u = await c.worklogService.ustSummary({ ...range, catalog: catalog?.get().items ?? [] });
+      if (u.error) return { erro: u.error };
+      const row = (t) => ({ tarefa: t.key, cat: t.cat, tamanho: t.size, ust: t.ust, ...(t.hours !== undefined ? { horas: t.hours } : {}) });
+      return {
+        concluidas: u.concluded.ust, emAndamento: u.inProgress.ust,
+        tarefasConcluidas: u.concluded.tasks.map(row), tarefasEmAndamento: u.inProgress.tasks.map(row),
+        pendencias: u.problems.map((p) => ({ tarefa: p.key, problema: p.problem })),
+      };
+    } catch (err) {
+      return { erro: `Não foi possível calcular as UST: ${err?.message ?? 'erro desconhecido'}` };
+    }
+  }
 
   server.registerTool('listar_regras', {
     title: 'Listar regras de apontamento automático',

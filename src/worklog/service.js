@@ -8,6 +8,7 @@ import { distribute, formatDuration, toJiraStarted, hhmmToMin, minToHhmm, addDay
 import { isAdf, adfToText } from '../shared/flatten.js';
 import { pickComments, GENERIC_MODEL } from './comments.js';
 import { checkSlot } from './auto.js';
+import { createUstCalculator } from './ust.js';
 
 export class ConflictError extends Error {}
 export class ScopeError extends Error {}
@@ -443,5 +444,6 @@ export function createWorklogService({ client, baseUrl, supportService, ai, rng 
     return run;
   }
 
-  return { aiEnabled: Boolean(ai?.enabled), listTasks, describe, myWorklogs, busy, preview, aiComments, submit, batch, autoLog, findBySummary };
+  const ust = createUstCalculator({ client, baseUrl, myWorklogs: (from, to) => myWorklogs(from, to) });
+  return { aiEnabled: Boolean(ai?.enabled), listTasks, describe, myWorklogs, busy, preview, aiComments, submit, batch, autoLog, findBySummary, ustSummary: ust.summary };
 }

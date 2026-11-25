@@ -39,7 +39,8 @@ const shift = (date, n) => { const d = new Date(`${date}T00:00:00Z`); d.setUTCDa
 const adf = (text) => ({ type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] });
 
 const epic = (key, summary, status) => ({ key, fields: { summary, issuetype: { name: 'Épico', hierarchyLevel: 1 }, status: { name: status }, project: { key: 'BI' } } });
-const task = (key, parent, model, status) => ({
+// Item do Catálogo (cascata) e Tamanho (customfield_10300, aba Apontamentos) para o indicador de UST.
+const task = (key, parent, model, status, size) => ({
   key,
   fields: {
     summary: `${model === 'analise' ? 'Analise' : 'Implementação'} da demanda ${parent}`,
@@ -47,9 +48,13 @@ const task = (key, parent, model, status) => ({
     status: { name: status },
     parent: { key: parent },
     timespent: 0,
-    customfield_10104: { id: '11927', child: { id: model === 'analise' ? '11930' : '12117' } },
+    customfield_10104: model === 'analise'
+      ? { id: '11927', value: 'Business Intelligence', child: { id: '11930', value: 'CAT-105 - Realizar diagnóstico de incidente, problema, erro ou demanda na solução de BI' } }
+      : { id: '11927', value: 'Business Intelligence', child: { id: '12117', value: 'CAT-166 - Manter script de carga do Qlik Sense' } },
+    ...(size ? { customfield_10300: { value: size } } : {}),
   },
 });
+const FIELDS = [{ id: 'summary', name: 'Resumo', custom: false }, { id: 'customfield_10104', name: 'Item do Catálogo', custom: true }, { id: 'customfield_10300', name: 'Tamanho', custom: true }];
 const sijud = (key, summary) => ({ key, fields: { summary, issuetype: { name: 'Tarefa', hierarchyLevel: 0 }, status: { name: 'Em Execução' }, project: { key: 'SIJUD' }, timespent: 0 } });
 
 // Dados do Jira do admin (o conjunto completo do mock antigo).
@@ -66,10 +71,10 @@ function adminDataset(me) {
       epic('BI-9999', 'Épico que simula erro do Jira', 'Aberto'),
       epic('BI-2700', 'Épico já concluído, sem tarefas de apoio', 'Concluído'),
       { key: 'BI-3000', fields: { summary: 'História de exemplo', issuetype: { name: 'História', hierarchyLevel: 0 }, status: { name: 'Aberto' }, project: { key: 'BI' } } },
-      task('QSENSE-4085', 'BI-2931', 'analise', 'Aberto'),
+      task('QSENSE-4085', 'BI-2931', 'analise', 'Aberto', 'P'),
       task('QSENSE-4086', 'BI-2931', 'implementacao', 'Aberto'),
-      task('QSENSE-4057', 'BI-2861', 'analise', 'Concluído'),
-      task('QSENSE-4058', 'BI-2861', 'implementacao', 'Concluído'),
+      task('QSENSE-4057', 'BI-2861', 'analise', 'Concluído', 'M'),
+      task('QSENSE-4058', 'BI-2861', 'implementacao', 'Concluído', 'P'),
       task('QSENSE-5100', 'BI-3001', 'analise', 'Aberto'),
       task('QSENSE-5101', 'BI-3001', 'implementacao', 'Aberto'),
       // Dailies mensais, para testar regra automática pelo texto com {MM/AAAA}.
@@ -84,6 +89,8 @@ function adminDataset(me) {
         wl(4, shift(prevMon, 2), '08:00', 3, 'Análise das fontes de dados'),
       ],
       'SIJUD-1': [wl(20, mon, '14:00', 0.5, 'Atendimento ao usuário'), wl(21, shift(mon, 2), '09:07', 1 / 3, 'Batida de timer (20m às 09:07)')],
+      'QSENSE-4085': [wl(30, shift(mon, 1), '08:00', 2, 'Diagnóstico inicial')],
+      'QSENSE-5100': [wl(31, shift(mon, 1), '10:00', 1, 'Levantamento (tarefa sem Tamanho)')],
       'QSENSE-4058': [
         wl(5, prevMon, '13:00', 4, 'Ajustes no script de carga'),
         wl(6, shift(prevMon, 1), '13:00', 5, 'Desenvolvimento de telas no Qlik Sense'),
@@ -119,10 +126,13 @@ function createMockJira({ me, displayName, issues: list, worklogs, nextIssue = 5
   return {
     async call({ method = 'GET', path, query = {}, body }) {
       if (path === '/rest/api/3/myself') return ok({ accountId: me, displayName });
+      if (path === '/rest/api/3/field') return ok(FIELDS);
       if (path === '/rest/api/3/search/jql') {
         const jql = body.jql;
+        const done = (i) => /^conclu/i.test(i.fields.status?.name ?? '');
         let found = [];
-        if (jql.startsWith('assignee')) found = [...issues.values()].filter((i) => i.fields.project?.key === 'BI');
+        if (jql.includes('statusCategory = Done')) found = [...issues.values()].filter((i) => done(i) && i.fields.customfield_10104);
+        else if (jql.startsWith('assignee')) found = [...issues.values()].filter((i) => i.fields.project?.key === 'BI');
         else if (jql.startsWith('project = QSENSE')) {
           const keys = jql.match(/parent in \(([^)]*)\)/)[1].split(',').map((s) => s.trim());
           found = [...issues.values()].filter((i) => keys.includes(i.fields.parent?.key));
@@ -132,6 +142,7 @@ function createMockJira({ me, displayName, issues: list, worklogs, nextIssue = 5
         } else if (jql.startsWith('worklogAuthor')) {
           const [, from, to] = jql.match(/worklogDate >= "([^"]+)" AND worklogDate <= "([^"]+)"/);
           found = [...issues.values()].filter((i) => (worklogs[i.key] ?? []).some((w) => w.started.slice(0, 10) >= from && w.started.slice(0, 10) <= to));
+          if (jql.includes('statusCategory != Done')) found = found.filter((i) => !done(i) && i.fields.customfield_10104);
         }
         return ok({ issues: found, isLast: true });
       }

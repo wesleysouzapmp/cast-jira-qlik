@@ -9,6 +9,8 @@ import { AiError } from './worklog/ai.js';
 import { registerAuth } from './web/auth.js';
 import { registerAccount, defaultValidateAnthropicKey } from './web/account.js';
 import { registerAdmin } from './web/admin.js';
+import { registerCatalog } from './web/catalog.js';
+import { createCatalogRepo } from './db/catalog.js';
 import { createJiraClient } from './jiraClient.js';
 import { createAuditRepo } from './db/audit.js';
 import { createOAuthProvider } from './mcp/oauthProvider.js';
@@ -253,9 +255,18 @@ function parseChanges(changes) {
 }
 
 // Rotas do apontamento de horas.
-function registerWorklogRoutes(app, { audit }) {
+function registerWorklogRoutes(app, { audit, catalog }) {
   const handle = makeGuard();
   app.get('/api/worklog/tasks', handle((_req, ctx) => ctx.worklogService.listTasks()));
+
+  // Indicador de UST do período (até 400 dias), com o catálogo de UST do app.
+  app.get('/api/worklog/ust', handle((req, ctx) => {
+    const from = checkDate(req.query.from, 'Data inicial');
+    const to = checkDate(req.query.to, 'Data final');
+    const days = (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000 + 1;
+    if (days < 1 || days > 400) throw new BadRequest('Período de UST: de 1 a 400 dias.');
+    return ctx.worklogService.ustSummary({ from, to, catalog: catalog?.get().items ?? [] });
+  }));
 
   // Tarefas avulsas: consulta de uma chave e favoritos (favoritos.json).
   const checkKey = (key) => {
@@ -358,6 +369,7 @@ export function createApp({
   if (!users || !sessions || !contexts || !limiter) throw new Error('createApp: users, sessions, contexts e limiter são obrigatórios.');
   if (mcp && !oauth) throw new Error('createApp: mcp exige oauth.');
   audit ??= db ? createAuditRepo(db, now) : null;
+  const catalog = db ? createCatalogRepo(db, now) : null;
   const app = express();
   app.set('case sensitive routing', true);
   const stripPort = (h) => String(h ?? '').replace(/:\d+$/, '').toLowerCase();
@@ -413,11 +425,12 @@ export function createApp({
 
   registerAccount(app, { users, sessions, contexts, config, audit, limiter, makeJiraClient, validateAnthropicKey, oauth });
   registerAdmin(app, { users, sessions, contexts, config, audit, oauth });
+  if (catalog) registerCatalog(app, { catalog, audit });
   if (mcp) {
     const provider = createOAuthProvider({ oauth, users, now, redirectHosts: mcp.redirectHosts });
     mountMcp(app, {
       ...mcp, provider, users, audit,
-      serverDeps: { contexts, holidayProvider, autoRunner, ...(now ? { now } : {}), ...mcp.serverDeps },
+      serverDeps: { contexts, holidayProvider, autoRunner, catalog, ...(now ? { now } : {}), ...mcp.serverDeps },
     });
   }
 
@@ -451,7 +464,7 @@ export function createApp({
   }));
 
   registerSupportRoutes(app, { audit });
-  registerWorklogRoutes(app, { audit });
+  registerWorklogRoutes(app, { audit, catalog });
   if (autoRunner) registerAutoRoutes(app, { autoRunner, audit });
   if (holidayProvider) {
     app.get('/api/holidays', async (req, res) => {
