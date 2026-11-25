@@ -139,6 +139,10 @@ export const MIGRATIONS = [
   );
   CREATE INDEX idx_audit_user_at ON audit(user_id, at);
   `,
+  // Convites do tipo 'reset' apontam para o usuário cuja senha será redefinida.
+  `
+  ALTER TABLE invites ADD COLUMN user_id TEXT REFERENCES users(id) ON DELETE CASCADE;
+  `,
 ];
 
 export function migrate(db) {
