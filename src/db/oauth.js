@@ -18,6 +18,7 @@ export function createOAuthRepo(db, now = () => Date.now()) {
     clientGet: db.prepare('SELECT client_id, client_secret_hash, redirect_uris, name, created_at, metadata FROM oauth_clients WHERE client_id = ?'),
     codeInsert: db.prepare(`INSERT INTO oauth_codes (code_hash, client_id, user_id, code_challenge, redirect_uri, scopes, expires_at, resource)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`),
+    codePeek: db.prepare('SELECT client_id, user_id, code_challenge, redirect_uri, scopes, expires_at, resource FROM oauth_codes WHERE code_hash = ?'),
     codeTake: db.prepare('DELETE FROM oauth_codes WHERE code_hash = ? RETURNING client_id, user_id, code_challenge, redirect_uri, scopes, expires_at, resource'),
     tokenInsert: db.prepare(`INSERT INTO oauth_tokens (token_hash, kind, client_id, user_id, scopes, expires_at, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)`),
@@ -34,6 +35,14 @@ export function createOAuthRepo(db, now = () => Date.now()) {
       WHERE t.user_id = ? AND t.revoked_at IS NULL AND t.expires_at > ?
       GROUP BY t.client_id, c.name ORDER BY created_at, t.client_id`),
   };
+
+  function codeRow(r) {
+    if (!r || r.expires_at <= now()) return null;
+    return {
+      clientId: r.client_id, userId: r.user_id, challenge: r.code_challenge,
+      redirectUri: r.redirect_uri, scopes: parseScopes(r.scopes), resource: r.resource ?? undefined,
+    };
+  }
 
   function mint(clientId, userId, scopes) {
     const t = now();
@@ -76,12 +85,12 @@ export function createOAuthRepo(db, now = () => Date.now()) {
     // Uso único: o código é apagado ao ser lido, vencido ou não.
     takeCode(code) {
       if (!code) return null;
-      const r = q.codeTake.get(sha256(code));
-      if (!r || r.expires_at <= now()) return null;
-      return {
-        clientId: r.client_id, userId: r.user_id, challenge: r.code_challenge,
-        redirectUri: r.redirect_uri, scopes: parseScopes(r.scopes), resource: r.resource ?? undefined,
-      };
+      return codeRow(q.codeTake.get(sha256(code)));
+    },
+    // Leitura sem consumir (o SDK pede o desafio PKCE antes da troca).
+    peekCode(code) {
+      if (!code) return null;
+      return codeRow(q.codePeek.get(sha256(code)));
     },
     issueTokens({ clientId, userId, scopes }) {
       return mint(clientId, userId, scopes);

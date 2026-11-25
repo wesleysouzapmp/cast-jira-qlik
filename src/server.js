@@ -10,6 +10,8 @@ import { registerAccount, defaultValidateAnthropicKey } from './web/account.js';
 import { registerAdmin } from './web/admin.js';
 import { createJiraClient } from './jiraClient.js';
 import { createAuditRepo } from './db/audit.js';
+import { createOAuthProvider } from './mcp/oauthProvider.js';
+import { mountMcp, MCP_CSRF_EXEMPT } from './mcp/index.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../public', import.meta.url));
 const SHARED_DIR = fileURLToPath(new URL('./shared', import.meta.url));
@@ -321,12 +323,16 @@ function registerAutoRoutes(app, { autoRunner, audit }) {
 // sempre registrada). `audit` é opcional: se ausente e houver `db`, é criado a partir dele.
 // holidayProvider e autoRunner são opcionais (sem eles, /api/holidays e /api/auto* não existem).
 // makeJiraClient e validateAnthropicKey (validação de credenciais em Minha conta) têm padrão
-// real; os testes injetam falsos. `oauth` é opcional: se tiver revokeFor, é chamado ao desativar.
+// real; os testes injetam falsos. `oauth` é opcional: se tiver revokeFor, é chamado ao desativar,
+// e connectorsFor/revokeFor alimentam os conectores de Minha conta.
+// `mcp` é opcional: { publicUrl, rateLimit?, serverDeps? } (exige `oauth` = createOAuthRepo) monta o
+// conector MCP (rotas OAuth do SDK, /api/consentimento e /mcp); publicUrl vem de publicUrlFor().
 export function createApp({
   config, db, users, sessions, contexts, holidayProvider, autoRunner, limiter, now, audit,
-  makeJiraClient = createJiraClient, validateAnthropicKey = defaultValidateAnthropicKey, oauth,
+  makeJiraClient = createJiraClient, validateAnthropicKey = defaultValidateAnthropicKey, oauth, mcp,
 }) {
   if (!users || !sessions || !contexts || !limiter) throw new Error('createApp: users, sessions, contexts e limiter são obrigatórios.');
+  if (mcp && !oauth) throw new Error('createApp: mcp exige oauth.');
   audit ??= db ? createAuditRepo(db, now) : null;
   const app = express();
   app.set('case sensitive routing', true);
@@ -352,6 +358,8 @@ export function createApp({
   // CSRF: método que altera estado com Origin de outro site é recusado.
   app.use((req, res, next) => {
     if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
+    // OAuth do MCP e /mcp não usam cookie (Bearer/PKCE): CSRF não se aplica, e clientes web mandam Origin.
+    if (mcp && MCP_CSRF_EXEMPT.has(req.path)) return next();
     const origin = req.headers.origin;
     if (origin === undefined) return next();
     let originHost = null;
@@ -376,8 +384,12 @@ export function createApp({
 
   app.get('/api/catalog', (_req, res) => res.json(CATALOG));
 
-  registerAccount(app, { users, sessions, contexts, config, audit, limiter, makeJiraClient, validateAnthropicKey });
+  registerAccount(app, { users, sessions, contexts, config, audit, limiter, makeJiraClient, validateAnthropicKey, oauth });
   registerAdmin(app, { users, sessions, contexts, config, audit, oauth });
+  if (mcp) {
+    const provider = createOAuthProvider({ oauth, users, now });
+    mountMcp(app, { ...mcp, provider, users, audit });
+  }
 
   function guard(handler) {
     return async (req, res) => {

@@ -142,3 +142,17 @@ test('connectorsFor: clientes distintos com tokens ativos, sem tokens', () => {
   s.oauth.revokeFor(s.ana.id);
   assert.deepEqual(s.oauth.connectorsFor(s.ana.id), []);
 });
+
+test('peekCode: lê sem consumir; vencido ou inexistente dá null', () => {
+  const s = setup();
+  s.oauth.saveCode(codeArgs(s));
+  const expected = { clientId: 'c1', userId: s.ana.id, challenge: 'ch', redirectUri: 'https://claude.ai/cb', scopes: ['jira'], resource: undefined };
+  assert.deepEqual(s.oauth.peekCode('cod1'), expected);
+  assert.deepEqual(s.oauth.peekCode('cod1'), expected);
+  assert.deepEqual(s.oauth.takeCode('cod1'), expected);
+  assert.equal(s.oauth.peekCode('cod1'), null);
+  assert.equal(s.oauth.peekCode(''), null);
+  s.oauth.saveCode(codeArgs(s, { code: 'cod2' }));
+  s.clock.advance(CODE_TTL_MS + 1);
+  assert.equal(s.oauth.peekCode('cod2'), null);
+});

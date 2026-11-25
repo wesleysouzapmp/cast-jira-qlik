@@ -5,6 +5,8 @@
 //  - O token só é gravado depois que o Jira aceita (GET /rest/api/3/myself com um cliente
 //    novo); o accountId vem dessa resposta. Depois de gravar, o contexto é invalidado.
 //  - Troca de senha exige a atual e encerra as outras sessões (a atual continua).
+//  - Conectores MCP (clientes OAuth com token ativo) vêm de oauth.connectorsFor; revogar um
+//    derruba os tokens só daquele cliente para este usuário. Sem `oauth`, a lista é vazia.
 import Anthropic from '@anthropic-ai/sdk';
 import { hashPassword, verifyPassword } from '../auth/passwords.js';
 import { sha256 } from '../auth/tokens.js';
@@ -29,7 +31,9 @@ export async function defaultValidateAnthropicKey(key) {
 
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
 
-export function registerAccount(app, { users, sessions, contexts, config, audit, limiter, makeJiraClient, validateAnthropicKey }) {
+export function registerAccount(app, { users, sessions, contexts, config, audit, limiter, makeJiraClient, validateAnthropicKey, oauth }) {
+  const connectorsOf = (userId) => (typeof oauth?.connectorsFor === 'function' ? oauth.connectorsFor(userId) : []);
+
   app.get('/api/conta', route((req) => {
     const id = req.user.id;
     const s = users.getSecrets(id);
@@ -43,6 +47,7 @@ export function registerAccount(app, { users, sessions, contexts, config, audit,
       sessions: sessions.listFor(id).map((x) => ({
         createdAt: x.createdAt, expiresAt: x.expiresAt, userAgent: x.userAgent, current: x.id === current,
       })),
+      connectors: connectorsOf(id),
     };
   }));
 
@@ -97,6 +102,14 @@ export function registerAccount(app, { users, sessions, contexts, config, audit,
     users.setPassword(user.id, await hashPassword(nova));
     sessions.destroyAllFor(user.id, req.sessionToken);
     auditLog(audit, req, 'conta.senha', null);
+    return { ok: true };
+  }));
+
+  app.delete('/api/conta/conectores/:clientId', route(async (req) => {
+    const clientId = String(req.params.clientId);
+    if (!connectorsOf(req.user.id).some((c) => c.clientId === clientId)) throw new HttpError(404, 'Conector não encontrado.');
+    await oauth.revokeFor(req.user.id, clientId);
+    auditLog(audit, req, 'conta.conector', { clientId });
     return { ok: true };
   }));
 

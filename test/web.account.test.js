@@ -41,7 +41,7 @@ test('GET /api/conta nunca devolve o token nem a chave Anthropic', async () => {
   assert.deepEqual(body.anthropic, { configured: true });
   assert.equal(body.sessions.length, 1);
   assert.equal(body.sessions[0].current, true);
-  assert.equal(body.connectors, undefined);
+  assert.deepEqual(body.connectors, []);
 });
 
 test('PUT /api/conta/jira: Jira 401 → 400 e nada é gravado', async () => {
@@ -263,4 +263,37 @@ test('rotas da conta exigem login', async () => {
   const t = await makeTestApp();
   const res = await fetch(`${t.base}/api/conta`);
   assert.equal(res.status, 401);
+});
+
+test('desativar: falha ao revogar OAuth não impede invalidar o contexto', async () => {
+  const t = await makeTestApp({ oauth: { revokeFor() { throw new Error('banco travado'); } } });
+  const invalidated = [];
+  t.contexts.invalidate = (id) => { invalidated.push(id); };
+  const bob = t.login({ email: 'bob@x.com', name: 'Bob' });
+  const res = await t.json('PUT', `/api/admin/usuarios/${bob.user.id}/ativo`, { ativo: false });
+  assert.equal(res.status, 500);
+  assert.deepEqual(invalidated, [bob.user.id]);
+  assert.equal(t.users.byId(bob.user.id).active, false);
+});
+
+test('conectores: GET /api/conta lista; DELETE revoga só o do próprio usuário', async () => {
+  const calls = [];
+  const oauth = {
+    connectorsFor(userId) { calls.push(['list', userId]); return userId === 'nada' ? [] : [{ clientId: 'c1', name: 'Claude', createdAt: 1, lastUsedAt: 2 }]; },
+    revokeFor(userId, clientId) { calls.push(['revoke', userId, clientId]); },
+  };
+  const t = await makeTestApp({ oauth });
+  const conta = await (await t.json('GET', '/api/conta')).json();
+  assert.deepEqual(conta.connectors, [{ clientId: 'c1', name: 'Claude', createdAt: 1, lastUsedAt: 2 }]);
+  const res = await t.json('DELETE', '/api/conta/conectores/c1');
+  assert.equal(res.status, 200);
+  assert.deepEqual(calls.at(-1), ['revoke', t.user.id, 'c1']);
+  assert.equal((await t.json('DELETE', '/api/conta/conectores/outro')).status, 404);
+  assert.ok(t.audit.list(t.user.id).some((a) => a.action === 'conta.conector' && a.detail.clientId === 'c1'));
+});
+
+test('conectores: sem repositório OAuth a lista vem vazia', async () => {
+  const t = await makeTestApp();
+  const conta = await (await t.json('GET', '/api/conta')).json();
+  assert.deepEqual(conta.connectors, []);
 });

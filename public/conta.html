@@ -72,6 +72,17 @@
     </section>
 
     <section class="panel">
+      <h2>Conectores (Claude)</h2>
+      <p class="muted">Aplicativos que você autorizou a acessar e gravar seus apontamentos pelo conector MCP. Revogar corta o acesso na hora; para usar de novo, conecte outra vez pelo aplicativo.</p>
+      <table class="small">
+        <thead><tr><th>Aplicativo</th><th>Autorizado em</th><th>Último token</th><th></th></tr></thead>
+        <tbody id="conectores"></tbody>
+      </table>
+      <p id="conectoresVazio" class="muted" hidden>Nenhum conector autorizado.</p>
+      <p id="conectoresMsg" class="msg" role="status"></p>
+    </section>
+
+    <section class="panel">
       <h2>Sessões abertas</h2>
       <table class="small">
         <thead><tr><th>Navegador</th><th>Desde</th><th>Expira</th><th></th></tr></thead>

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Autorizar acesso</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="auth-page">
+    <section class="panel">
+      <h1>Autorizar acesso</h1>
+      <p id="pedido" class="muted">Carregando o pedido…</p>
+      <p id="destino" class="muted"></p>
+      <div class="actions">
+        <button class="primary" type="button" id="permitir" disabled>Permitir</button>
+        <button type="button" id="negar" disabled>Negar</button>
+      </div>
+      <p id="msg" class="msg err" role="alert"></p>
+    </section>
+  </main>
+  <script type="module" src="consentimento.js"></script>
+</body>
+</html>

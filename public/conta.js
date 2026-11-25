@@ -1,4 +1,4 @@
-// Minha conta: token do Jira, chave Anthropic, senha e sessões.
+// Minha conta: token do Jira, chave Anthropic, senha, conectores MCP e sessões.
 const $ = (id) => document.getElementById(id);
 
 async function api(method, path, body) {
@@ -54,6 +54,43 @@ function render(conta) {
     tbody.append(tr);
   }
   $('encerrar').disabled = conta.sessions.length <= 1;
+
+  renderConectores(conta.connectors ?? []);
+}
+
+function renderConectores(lista) {
+  const tbody = $('conectores');
+  tbody.textContent = '';
+  $('conectoresVazio').hidden = lista.length > 0;
+  for (const c of lista) {
+    const tr = document.createElement('tr');
+    for (const v of [c.name, quando(c.createdAt), quando(c.lastUsedAt)]) {
+      const td = document.createElement('td');
+      td.textContent = v;
+      tr.append(td);
+    }
+    const td = document.createElement('td');
+    const botao = document.createElement('button');
+    botao.type = 'button';
+    botao.textContent = 'Revogar';
+    botao.addEventListener('click', () => revogar(c, botao));
+    td.append(botao);
+    tr.append(td);
+    tbody.append(tr);
+  }
+}
+
+async function revogar(c, botao) {
+  if (!confirm(`Revogar o acesso de ${c.name}?`)) return;
+  botao.disabled = true;
+  try {
+    await api('DELETE', `/api/conta/conectores/${encodeURIComponent(c.clientId)}`);
+    aviso('conectoresMsg', `Acesso de ${c.name} revogado.`, true);
+    await carregar();
+  } catch (err) {
+    aviso('conectoresMsg', err.message, false);
+    botao.disabled = false;
+  }
 }
 
 async function carregar() {

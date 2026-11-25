@@ -6,8 +6,9 @@
 //    vale na hora.
 //  - Links são absolutos: https://<publicHost> quando configurado; senão a origem da própria
 //    requisição (o Host já passou pela checagem de localhost/publicHost do servidor).
-//  - Desativar: setActive(false), apaga as sessões, revoga tokens OAuth (oauth.revokeFor,
-//    quando existir) e invalida o contexto. O admin não pode desativar a si mesmo.
+//  - Desativar: setActive(false), apaga as sessões, invalida o contexto e só então revoga os
+//    tokens OAuth (oauth.revokeFor, quando existir): falha na revogação não pula a invalidação
+//    (e o verificador do MCP já recusa usuário inativo). O admin não pode desativar a si mesmo.
 import { HttpError, route, auditLog } from './route.js';
 
 const INVITE_TTL_MS = 7 * 24 * 3600 * 1000;
@@ -52,8 +53,8 @@ export function registerAdmin(app, { users, sessions, contexts, config, audit, o
     users.setActive(u.id, ativo);
     if (!ativo) {
       sessions.destroyAllFor(u.id);
-      if (typeof oauth?.revokeFor === 'function') await oauth.revokeFor(u.id);
       contexts.invalidate(u.id);
+      if (typeof oauth?.revokeFor === 'function') await oauth.revokeFor(u.id);
     }
     auditLog(audit, req, 'admin.ativo', { userId: u.id, ativo });
     return { ok: true };
