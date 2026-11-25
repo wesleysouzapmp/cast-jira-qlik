@@ -29,7 +29,7 @@ Os comandos de PC abaixo são para o **PowerShell do Windows**. Os comandos de V
 
    O SSH do Windows recusa chaves que outros usuários conseguem ler (aviso "UNPROTECTED PRIVATE KEY FILE"). Se aparecer esse aviso, deixe a chave só com o seu usuário:
    ```powershell
-   icacls $HOME.sshoracle_cast /inheritance:r /grant:r "$($env:USERDOMAIN)$($env:USERNAME):(R,W)"
+   icacls $HOME\.ssh\oracle_cast /inheritance:r /grant:r "$($env:USERDOMAIN)\$($env:USERNAME):(R,W)"
    ```
    Use um PowerShell aberto normalmente, não "como administrador".
 6. Clique em **Create**. Quando a instância ficar *Running*, anote o **Public IP address**. Nos comandos abaixo, ele aparece como `IP_DA_VM`.
@@ -71,7 +71,7 @@ Outros campos do `.env`, como a chave Anthropic: `sudo nano /opt/cast-jira-qlik/
 
 ### Migrar da versão de um usuário (VM que já existia)
 
-1. Atualize: `bash setup.sh`. Ele gera a `APP_SECRET_KEY` e cria a pasta `data/`. Os `agendamentos*.json` e `favoritos.json` continuam onde estão.
+1. Atualize **baixando o script de novo** (o `setup.sh` que ficou na VM é da versão antiga e não gera a `APP_SECRET_KEY`; rodá-lo puxaria o código novo e o serviço não subiria): `curl -fsSL https://raw.githubusercontent.com/wesleysouzapmp/cast-jira-qlik/main/deploy/oracle/setup.sh -o setup.sh && bash setup.sh` (para testar outra branch: `BRANCH=nome bash setup.sh`). Ele gera a `APP_SECRET_KEY` e cria a pasta `data/`. Os `agendamentos*.json` e `favoritos.json` continuam onde estão.
 2. **Logo em seguida**, rode o `bootstrap` (comando acima). Ele lê `JIRA_EMAIL` e `JIRA_API_TOKEN` do `.env`, cria o admin com esse token e importa `agendamentos.json`, `agendamentos-log.json` e `favoritos.json`. Faça isso logo após atualizar: assim o agendador diário continua rodando para você, com os mesmos dados. Rodar de novo não duplica nada.
 3. Confirme que está tudo certo e **apague** `JIRA_EMAIL` e `JIRA_API_TOKEN` do `.env` (`sudo nano /opt/cast-jira-qlik/.env`): o servidor não usa mais essas variáveis.
 
@@ -134,10 +134,12 @@ Pela linha de comando (OCI CLI), o `--ingress-security-rules` **substitui a list
 oci network security-list update --security-list-id ocid1.securitylist.oc1..XXXX --force --ingress-security-rules '[
   {"protocol":"6","source":"0.0.0.0/0","tcpOptions":{"destinationPortRange":{"min":22,"max":22}}},
   {"protocol":"6","source":"0.0.0.0/0","tcpOptions":{"destinationPortRange":{"min":80,"max":80}}},
-  {"protocol":"6","source":"0.0.0.0/0","tcpOptions":{"destinationPortRange":{"min":443,"max":443}}}
+  {"protocol":"6","source":"0.0.0.0/0","tcpOptions":{"destinationPortRange":{"min":443,"max":443}}},
+  {"protocol":"1","source":"0.0.0.0/0","icmpOptions":{"type":3,"code":4}},
+  {"protocol":"1","source":"10.0.0.0/16","icmpOptions":{"type":3}}
 ]'
 ```
-Antes, veja as regras atuais (`oci network security-list get --security-list-id ...`) e inclua qualquer outra que exista, como ICMP.
+Antes, veja as regras atuais (`oci network security-list get --security-list-id ...`) e inclua qualquer outra que exista (as duas regras ICMP acima são as padrão da VCN; ajuste `10.0.0.0/16` se a sua rede for outra). Rode esse comando no **OCI Cloud Shell** ou no **Git Bash**: o PowerShell 5.1 estraga as aspas do JSON.
 
 Com tudo pronto, rode `bash setup.sh` de novo na VM (aplica `PUBLIC_HOST`: Caddy, portas e timer do DuckDNS) e teste:
 ```bash
@@ -168,7 +170,7 @@ Cada pessoa, no claude.ai: **Configurações → Conectores → Adicionar conect
 | Acompanhar o log | `sudo journalctl -u cast-jira -f` |
 | Reiniciar | `sudo systemctl restart cast-jira` |
 | Criar convite | `cd /opt/cast-jira-qlik && sudo -u castjira node src/admin.js invite` |
-| Atualizar para a última versão do GitHub | `bash setup.sh` (o mesmo script: faz `git pull`, `npm ci` e reinicia; o `.env` e os dados são preservados) |
+| Atualizar para a última versão do GitHub | `curl -fsSL https://raw.githubusercontent.com/wesleysouzapmp/cast-jira-qlik/main/deploy/oracle/setup.sh -o setup.sh && bash setup.sh` (baixa o script atual, faz `git pull`, `npm ci` e reinicia; o `.env` e os dados são preservados; `BRANCH=nome bash setup.sh` para testar uma branch) |
 | Editar feriados | `sudo -u castjira nano /opt/cast-jira-qlik/feriados.json` (relido a cada consulta) |
 
 ## Cuidados
@@ -184,5 +186,5 @@ Cada pessoa, no claude.ai: **Configurações → Conectores → Adicionar conect
 - **Backup e restauração.**
   - Todo dia o timer `cast-jira-backup` grava `/var/backups/cast-jira/app-AAAA-MM-DD.db` e mantém as 7 mais recentes. Veja com `systemctl list-timers cast-jira-backup.timer`.
   - **Guarde também uma cópia do `.env`**: a `APP_SECRET_KEY` fica nele, e sem a chave os tokens cifrados do backup não podem ser lidos. Guarde os dois juntos, num lugar seguro (`sudo cat /opt/cast-jira-qlik/.env`, num cofre de senhas).
-  - A pasta de backup é do `castjira`. Para levar os arquivos ao PC, copie antes: `sudo cp /var/backups/cast-jira/app-*.db /tmp/ && sudo chown ubuntu /tmp/app-*.db`, e no PC `scp -i $HOME\.ssh\oracle_cast ubuntu@IP_DA_VM:/tmp/app-*.db .`.
+  - A pasta de backup é do `castjira`. Para levar os arquivos ao PC, copie antes: `sudo cp /var/backups/cast-jira/app-*.db /tmp/ && sudo chown ubuntu /tmp/app-*.db`, e no PC `scp -i $HOME\.ssh\oracle_cast ubuntu@IP_DA_VM:/tmp/app-*.db .`. Depois apague as cópias da VM: `sudo rm /tmp/app-*.db`.
   - Restaurar: `sudo systemctl stop cast-jira`; `sudo -u castjira cp /var/backups/cast-jira/app-AAAA-MM-DD.db /opt/cast-jira-qlik/data/app.db`; apague `app.db-wal` e `app.db-shm` da pasta `data/` se existirem; `sudo systemctl start cast-jira`. O `.env` precisa ter a mesma `APP_SECRET_KEY` de quando o backup foi feito.

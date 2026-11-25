@@ -18,7 +18,7 @@ as_app() { sudo -u "$APP_USER" -H "$@"; }
 
 say "Pacotes básicos"
 sudo apt-get update -y
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y git curl ca-certificates
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y git curl ca-certificates openssl
 
 current_node_major() { command -v node >/dev/null 2>&1 && node -p 'process.versions.node.split(".")[0]' || echo 0; }
 if [ "$(current_node_major)" -lt 22 ]; then
@@ -72,22 +72,30 @@ sudo chown "$APP_USER:$APP_USER" "$APP_DIR/.env"
 env_get() { sudo cat "$APP_DIR/.env" | awk -v k="$1" 'index($0, k "=") == 1 { v = substr($0, length(k) + 2) } END { print v }' | tr -d '\r'; }
 # Grava (ou acrescenta) CHAVE=valor no .env sem passar o valor na linha de comando.
 env_set() {
-  local tmp; tmp="$(mktemp)"
+  ENV_TMP="$(mktemp)"; trap 'rm -f "${ENV_TMP:-}"' EXIT INT TERM
   sudo cat "$APP_DIR/.env" | K="$1" V="$2" awk 'BEGIN { k = ENVIRON["K"]; v = ENVIRON["V"]; d = 0 }
     index($0, k "=") == 1 { if (!d) print k "=" v; d = 1; next }
     { print }
-    END { if (!d) print k "=" v }' > "$tmp"
-  sudo install -m 600 -o "$APP_USER" -g "$APP_USER" "$tmp" "$APP_DIR/.env"
-  rm -f "$tmp"
+    END { if (!d) print k "=" v }' > "$ENV_TMP"
+  sudo install -m 600 -o "$APP_USER" -g "$APP_USER" "$ENV_TMP" "$APP_DIR/.env"
+  rm -f "$ENV_TMP"
 }
 
 if [ -z "$(env_get APP_SECRET_KEY)" ]; then
   say "Gerando APP_SECRET_KEY no .env (guarde uma cópia do .env: sem a chave os tokens do banco ficam ilegíveis)"
-  env_set APP_SECRET_KEY "$(openssl rand -base64 32)"
+  NEW_KEY="$(openssl rand -base64 32)"
+  [ -n "$NEW_KEY" ] || { echo "Falha ao gerar a APP_SECRET_KEY (openssl)."; exit 1; }
+  env_set APP_SECRET_KEY "$NEW_KEY"
+  unset NEW_KEY
+fi
+if [ -z "$(env_get APP_SECRET_KEY)" ]; then
+  echo "APP_SECRET_KEY continua vazia no .env; não reinicio o serviço (ele não subiria)."
+  exit 1
 fi
 DATA_DIR_PATH="$APP_DIR/data"
 if [ -z "$(env_get DATA_DIR)" ]; then env_set DATA_DIR "$DATA_DIR_PATH"; fi
 DATA_DIR_PATH="$(env_get DATA_DIR)"
+case "$DATA_DIR_PATH" in /*) ;; *) echo "DATA_DIR no .env precisa ser um caminho absoluto (está: ${DATA_DIR_PATH})."; exit 1 ;; esac
 sudo install -d -m 700 -o "$APP_USER" -g "$APP_USER" "$DATA_DIR_PATH"
 
 say "sqlite3 (backup) e Caddy (HTTPS)"
@@ -101,7 +109,7 @@ fi
 
 say "Serviço systemd ${SERVICE}"
 render_unit() { # modelo destino
-  sed -e "s#__USER__#${APP_USER}#g" -e "s#__DIR__#${APP_DIR}#g" -e "s#__NODE__#$(command -v node)#g" "$1" | sudo tee "$2" >/dev/null
+  sed -e "s#__USER__#${APP_USER}#g" -e "s#__DATA_DIR__#${DATA_DIR_PATH}#g" -e "s#__DIR__#${APP_DIR}#g" -e "s#__NODE__#$(command -v node)#g" "$1" | sudo tee "$2" >/dev/null
 }
 render_unit "$APP_DIR/deploy/oracle/cast-jira.service" "/etc/systemd/system/${SERVICE}.service"
 
@@ -124,13 +132,27 @@ sudo systemctl enable --now cast-jira-backup.timer >/dev/null
 if [ "$DUCK_ON" -eq 1 ]; then sudo systemctl enable --now duckdns.timer >/dev/null; fi
 
 PUBLIC_HOST_VALUE="$(env_get PUBLIC_HOST)"
-if [ -n "$PUBLIC_HOST_VALUE" ]; then
+case "$PUBLIC_HOST_VALUE" in
+  *[!A-Za-z0-9.-]*|.*|*.)
+    echo "ERRO: PUBLIC_HOST inválido no .env (use só letras, números, ponto e hífen); o Caddy e o Caddyfile não foram alterados."
+    CADDY_OK=0 ;;
+esac
+CADDY_OK="${CADDY_OK:-1}"
+if [ -n "$PUBLIC_HOST_VALUE" ] && [ "$CADDY_OK" -eq 1 ]; then
   say "Caddy para https://${PUBLIC_HOST_VALUE}"
   PORT_VALUE="$(env_get PORT)"
-  sed -e "s#__PUBLIC_HOST__#${PUBLIC_HOST_VALUE}#g" -e "s#__PORT__#${PORT_VALUE:-3100}#g" \
-    "$APP_DIR/deploy/oracle/Caddyfile.tmpl" | sudo tee /etc/caddy/Caddyfile >/dev/null
-  sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
+  CADDY_TMP="$(mktemp)"; trap 'rm -f "${ENV_TMP:-}" "${CADDY_TMP:-}"' EXIT INT TERM
+  sed -e "s#__PUBLIC_HOST__#${PUBLIC_HOST_VALUE}#g" -e "s#__PORT__#${PORT_VALUE:-3100}#g"     "$APP_DIR/deploy/oracle/Caddyfile.tmpl" > "$CADDY_TMP"
+  if sudo caddy validate --config "$CADDY_TMP" --adapter caddyfile >/dev/null; then
+    sudo install -m 644 "$CADDY_TMP" /etc/caddy/Caddyfile
+  else
+    CADDY_OK=0
+    echo "ERRO: o Caddyfile gerado é inválido; mantive o /etc/caddy/Caddyfile anterior e não mexi no Caddy nem no firewall."
+  fi
+  rm -f "$CADDY_TMP"
+fi
 
+if [ -n "$PUBLIC_HOST_VALUE" ] && [ "$CADDY_OK" -eq 1 ]; then
   say "Liberando as portas 80 e 443 no iptables (antes da regra REJECT da imagem Oracle)"
   echo iptables-persistent iptables-persistent/autosave_v4 boolean false | sudo debconf-set-selections
   echo iptables-persistent iptables-persistent/autosave_v6 boolean false | sudo debconf-set-selections
@@ -146,7 +168,8 @@ if [ -n "$PUBLIC_HOST_VALUE" ]; then
   echo "Lembre de liberar 80 e 443 também na Security List da VCN (veja deploy/oracle/README.md)."
 
   if sudo systemctl is-active --quiet caddy; then sudo systemctl reload caddy; else sudo systemctl enable --now caddy; fi
-else
+elif [ -z "$PUBLIC_HOST_VALUE" ]; then
+  if command -v caddy >/dev/null 2>&1; then sudo systemctl disable --now caddy >/dev/null 2>&1 || true; fi
   say "PUBLIC_HOST não definido: Caddy e portas 80/443 ficam sem configurar (acesso só por túnel SSH)."
   echo "Para publicar com HTTPS: sudo bash ${APP_DIR}/deploy/oracle/set-env.sh --publico  e rode bash setup.sh de novo."
 fi
@@ -155,6 +178,7 @@ sudo systemctl restart "$SERVICE"
 sleep 2
 sudo systemctl --no-pager --lines=5 status "$SERVICE" || true
 if [ -n "$PUBLIC_HOST_VALUE" ]; then
+  [ "$CADDY_OK" -eq 1 ] || { echo "O cast-jira foi reiniciado, mas o Caddy não foi configurado (PUBLIC_HOST ou Caddyfile inválido; veja o erro acima)."; exit 1; }
   say "Pronto. Crie o primeiro admin: cd ${APP_DIR} && sudo -u ${APP_USER} node src/admin.js bootstrap  (https://${PUBLIC_HOST_VALUE})"
 else
   say "Pronto. Crie o primeiro admin: cd ${APP_DIR} && sudo -u ${APP_USER} node src/admin.js bootstrap  (acesso: http://localhost:3100 por túnel)"

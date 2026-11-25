@@ -1,4 +1,4 @@
-# Modelo; o setup.sh troca __USER__ e __DIR__ e instala em /etc/systemd/system/.
+# Modelo; o setup.sh troca __USER__ e __DATA_DIR__ e instala em /etc/systemd/system/.
 [Unit]
 Description=Backup diário do banco do cast-jira-qlik (guarda os 7 mais recentes)
 
@@ -9,5 +9,5 @@ Group=__USER__
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
-ExecStart=/bin/sh -c "sqlite3 __DIR__/data/app.db \".backup '/var/backups/cast-jira/app-$$(date +%%F).db'\""
+ExecStart=/bin/sh -c "sqlite3 __DATA_DIR__/app.db \".backup '/var/backups/cast-jira/app-$$(date +%%F).db'\""
 ExecStart=/bin/sh -c "ls -1t /var/backups/cast-jira/app-*.db | tail -n +8 | xargs -r rm -f --"

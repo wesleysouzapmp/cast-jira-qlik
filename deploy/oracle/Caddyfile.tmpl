@@ -1,6 +1,5 @@
 # Modelo do Caddy: o setup.sh preenche o host público e a porta do app e grava em /etc/caddy/Caddyfile.
 __PUBLIC_HOST__ {
-	encode gzip
 	reverse_proxy 127.0.0.1:__PORT__
 
 	header {

@@ -11,13 +11,13 @@ OWNER="${APP_USER:-castjira}"
 
 # upsert CHAVE=valor no .env (valor via ambiente, nunca na linha de comando)
 upsert() {
-  local tmp; tmp="$(mktemp)"
+  ENV_TMP="$(mktemp)"; trap 'rm -f "${ENV_TMP:-}"' EXIT INT TERM
   K="$1" V="$2" awk 'BEGIN { k = ENVIRON["K"]; v = ENVIRON["V"]; d = 0 }
     index($0, k "=") == 1 { if (!d) print k "=" v; d = 1; next }
     { print }
-    END { if (!d) print k "=" v }' "$F" > "$tmp"
-  install -m 600 -o "$OWNER" -g "$OWNER" "$tmp" "$F"
-  rm -f "$tmp"
+    END { if (!d) print k "=" v }' "$F" > "$ENV_TMP"
+  install -m 600 -o "$OWNER" -g "$OWNER" "$ENV_TMP" "$F"
+  rm -f "$ENV_TMP"
 }
 
 if [ "${1:-}" = "--publico" ]; then
