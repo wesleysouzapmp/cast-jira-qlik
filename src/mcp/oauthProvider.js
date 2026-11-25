@@ -7,7 +7,11 @@
 //    decide(); quem aprova é o dono do código. O pedido é de uso único.
 //  - challengeForAuthorizationCode() só LÊ o código (peekCode): o SDK confere o PKCE antes de
 //    chamar exchangeAuthorizationCode(), que consome (takeCode) e confere cliente e redirect_uri.
-//  - Registro: só redirect_uri HTTPS ou http em localhost/127.0.0.1/[::1].
+//  - Registro: só redirect_uri HTTPS em host da lista permitida (redirectHosts; env
+//    MCP_REDIRECT_HOSTS; padrão claude.ai,claude.com) ou http/https em localhost/127.0.0.1/[::1]
+//    (desenvolvimento/testes). Evita consentimento "phishing" com destino arbitrário.
+//    getClient() esconde clientes já gravados cujo redirect_uri saiu da lista (o /authorize
+//    responde 400 direto, sem redirecionar).
 //  - getClient() nunca devolve client_secret (o banco só tem o hash); por isso o segredo de
 //    clientes confidenciais é conferido por checkClientSecret(), montado antes do /token e do
 //    /revoke (o authenticateClient do SDK compara texto puro e pularia a checagem).
@@ -19,20 +23,33 @@ import {
 
 export const PENDING_TTL_MS = 10 * 60 * 1000;
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
+export const DEFAULT_REDIRECT_HOSTS = Object.freeze(['claude.ai', 'claude.com']);
 
-function allowedRedirect(uri) {
-  let u;
-  try { u = new URL(uri); } catch { return false; }
-  if (u.hash) return false;
-  return u.protocol === 'https:' || (u.protocol === 'http:' && LOOPBACK.has(u.hostname));
+// 'a.com, B.com' ou ['a.com'] -> ['a.com','b.com']; vazio/ausente -> padrão.
+export function parseRedirectHosts(value) {
+  const list = (Array.isArray(value) ? value : String(value ?? '').split(','))
+    .map((h) => String(h).trim().toLowerCase()).filter(Boolean);
+  return list.length ? list : [...DEFAULT_REDIRECT_HOSTS];
+}
+
+function redirectChecker(hosts) {
+  const allowed = new Set(parseRedirectHosts(hosts));
+  return (uri) => {
+    let u;
+    try { u = new URL(uri); } catch { return false; }
+    if (u.hash || u.username || u.password) return false;
+    if (LOOPBACK.has(u.hostname)) return u.protocol === 'http:' || u.protocol === 'https:';
+    return u.protocol === 'https:' && allowed.has(u.hostname);
+  };
 }
 
 const withType = (tokens, scopes) => ({
   ...tokens, token_type: 'Bearer', ...(scopes?.length ? { scope: scopes.join(' ') } : {}),
 });
 
-export function createOAuthProvider({ oauth, users, now = () => Date.now() }) {
+export function createOAuthProvider({ oauth, users, now = () => Date.now(), redirectHosts }) {
   if (!oauth || !users) throw new Error('createOAuthProvider: oauth e users são obrigatórios.');
+  const allowedRedirect = redirectChecker(redirectHosts);
   const pending = new Map(); // id -> { clientId, clientName, redirectUri, challenge, state, scopes, resource, expiresAt }
 
   function prune() {
@@ -45,11 +62,15 @@ export function createOAuthProvider({ oauth, users, now = () => Date.now() }) {
   }
 
   const clientsStore = {
-    getClient: (clientId) => oauth.getClient(clientId) ?? undefined,
+    getClient(clientId) {
+      const c = oauth.getClient(clientId);
+      if (!c || !(c.redirect_uris ?? []).every(allowedRedirect)) return undefined;
+      return c;
+    },
     registerClient(client) {
       const uris = client.redirect_uris ?? [];
       if (!uris.length || !uris.every(allowedRedirect)) {
-        throw new InvalidClientMetadataError('redirect_uri deve ser HTTPS (ou http://localhost para testes).');
+        throw new InvalidClientMetadataError('redirect_uri não permitida: use HTTPS num host autorizado (MCP_REDIRECT_HOSTS) ou http://localhost para testes.');
       }
       oauth.saveClient(client);
       return client; // o SDK devolve isto ao cliente (com o client_secret, se houver, uma única vez)

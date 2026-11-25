@@ -1,4 +1,5 @@
 import { hashPassword, verifyPassword } from '../auth/passwords.js';
+import { createRateLimiter } from '../auth/rateLimit.js';
 
 export const COOKIE_NAME = 'sid';
 const COOKIE_MAX_AGE_S = 30 * 24 * 3600;
@@ -10,6 +11,9 @@ const PUBLIC_PATHS = new Set(['/login.html', '/login.js', '/convite.html', '/con
 const PUBLIC_EXACT = new Set(['/api/login']);
 const PUBLIC_PREFIXES = ['/api/convite/', '/api/redefinir/'];
 const REFRESH_AFTER_MS = 24 * 3600 * 1000;
+// Segundo limite de login, só por IP (contra tentativas espalhadas por vários e-mails).
+const IP_LOGIN_MAX = 30;
+const IP_LOGIN_WINDOW_MS = 15 * 60 * 1000;
 // Calculado uma vez: o scrypt do e-mail desconhecido tem o mesmo custo do de um usuário real.
 const DUMMY_HASH = await hashPassword('dummy-password-for-timing');
 
@@ -32,7 +36,12 @@ const clientIp = (req) => req.ip ?? req.socket?.remoteAddress ?? 'unknown';
 
 // Registra as rotas de autenticação e devolve o middleware requireUser.
 // Ordem esperada pelo chamador: express.json() antes; requireUser depois das rotas públicas.
-export function registerAuth(app, { users, sessions, limiter, config = {}, now = () => Date.now() }) {
+// oauth (opcional): com revokeFor, a redefinição de senha também revoga os tokens do conector MCP.
+// ipLimiter (opcional): limite por IP; padrão 30 tentativas em 15 min.
+export function registerAuth(app, {
+  users, sessions, limiter, config = {}, now = () => Date.now(), oauth,
+  ipLimiter = createRateLimiter({ max: IP_LOGIN_MAX, windowMs: IP_LOGIN_WINDOW_MS, now }),
+}) {
   const secure = Boolean(config.publicHost);
   const lastRefresh = new Map(); // token -> instante do último Set-Cookie reenviado
 
@@ -83,8 +92,10 @@ export function registerAuth(app, { users, sessions, limiter, config = {}, now =
   app.post('/api/login', wrap(async (req, res) => {
     const email = strOf(req.body?.email).trim().toLowerCase();
     const senha = strOf(req.body?.senha);
-    const key = `${email}|${clientIp(req)}`;
-    if (!limiter.hit(key)) return bad(res, 'Muitas tentativas. Aguarde alguns minutos.', 429);
+    const ip = clientIp(req);
+    const key = `${email}|${ip}`;
+    // Por IP (não zera no sucesso) e por e-mail|IP (zera no login certo).
+    if (!ipLimiter.hit(ip) || !limiter.hit(key)) return bad(res, 'Muitas tentativas. Aguarde alguns minutos.', 429);
     const user = email ? users.byEmail(email) : null;
     // Roda o scrypt mesmo para e-mail desconhecido, para o tempo não revelar se a conta existe.
     const ok = await verifyPassword(senha, user ? user.passwordHash : DUMMY_HASH);
@@ -142,6 +153,7 @@ export function registerAuth(app, { users, sessions, limiter, config = {}, now =
     if (!invite?.userId) return bad(res, INVITE_TTL_FALLBACK, 410);
     users.setPassword(invite.userId, passwordHash);
     sessions.destroyAllFor(invite.userId);
+    if (typeof oauth?.revokeFor === 'function') await oauth.revokeFor(invite.userId);
     res.json({ ok: true });
   }));
 

@@ -32,7 +32,13 @@ function mostrar(info) {
   const nome = document.createElement('strong');
   nome.textContent = info.cliente;
   p.append(nome, ' quer acessar e gravar seus apontamentos no Jira.');
-  $('destino').textContent = `Depois da sua resposta você volta para ${info.destino}.`;
+  // Destino em destaque: só aprove se for o Claude (claude.ai / claude.com).
+  const d = $('destino');
+  d.textContent = '';
+  d.className = '';
+  const host = document.createElement('strong');
+  host.textContent = info.destino;
+  d.append('Depois da sua resposta você volta para ', host, '. Só permita se for o Claude.');
   botoes(true);
 }
 

@@ -77,3 +77,40 @@ test('constraints: e-mail único sem diferenciar maiúsculas; favorito único; F
   assert.throws(() => db.prepare("INSERT INTO users (id, email, name, role, password_hash, created_at) VALUES ('u3','x@y.z','N','root','h','t')").run(), /CHECK/);
   db.close();
 });
+
+test('openDb(): arquivo abre com busy_timeout de 5000 ms; escrita após o COMMIT de outra conexão passa', () => {
+  const file = join(tmpdir(), `busy-${process.pid}-${Date.now()}.db`);
+  const a = openDb(file);
+  const b = openDb(file);
+  try {
+    assert.equal(Object.values(b.prepare('PRAGMA busy_timeout').get())[0], 5000);
+    a.exec('BEGIN IMMEDIATE');
+    a.prepare("INSERT INTO schema_version (version) VALUES (999)").run();
+    a.exec('COMMIT');
+    b.exec('BEGIN IMMEDIATE');
+    b.prepare('DELETE FROM schema_version WHERE version = 999').run();
+    b.exec('COMMIT');
+    assert.equal(a.prepare('SELECT COUNT(*) AS n FROM schema_version WHERE version = 999').get().n, 0);
+  } finally {
+    a.close(); b.close();
+    for (const s of ['', '-wal', '-shm']) rmSync(file + s, { force: true });
+  }
+});
+
+test('openDb(): se a migração falhar, fecha a conexão e repassa o erro', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const file = join(tmpdir(), `migfail-${process.pid}-${Date.now()}.db`);
+  const raw = new DatabaseSync(file);
+  raw.exec('CREATE TABLE users (x INTEGER)'); // conflita com a 1ª migração
+  raw.close();
+  const closed = [];
+  const orig = DatabaseSync.prototype.close;
+  DatabaseSync.prototype.close = function () { closed.push(true); return orig.call(this); };
+  try {
+    assert.throws(() => openDb(file), /users/);
+    assert.equal(closed.length, 1, 'a conexão deveria ter sido fechada');
+  } finally {
+    DatabaseSync.prototype.close = orig;
+    for (const s of ['', '-wal', '-shm']) rmSync(file + s, { force: true });
+  }
+});

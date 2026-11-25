@@ -58,7 +58,8 @@ const publicUrl = publicUrlFor(config, port);
 
 const app = createApp({
   config, db, users, sessions, contexts, holidayProvider, autoRunner, limiter, audit, oauth,
-  mcp: { publicUrl },
+  // MCP_REDIRECT_HOSTS: hosts aceitos como redirect_uri do OAuth (padrão claude.ai,claude.com).
+  mcp: { publicUrl, redirectHosts: process.env.MCP_REDIRECT_HOSTS },
 });
 
 const server = app.listen(port, '127.0.0.1', () => {

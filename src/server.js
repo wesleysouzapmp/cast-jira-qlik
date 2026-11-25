@@ -325,7 +325,7 @@ function registerAutoRoutes(app, { autoRunner, audit }) {
 // makeJiraClient e validateAnthropicKey (validação de credenciais em Minha conta) têm padrão
 // real; os testes injetam falsos. `oauth` é opcional: se tiver revokeFor, é chamado ao desativar,
 // e connectorsFor/revokeFor alimentam os conectores de Minha conta.
-// `mcp` é opcional: { publicUrl, rateLimit?, serverDeps? } (exige `oauth` = createOAuthRepo) monta o
+// `mcp` é opcional: { publicUrl, redirectHosts?, rateLimit?, serverDeps? } (exige `oauth` = createOAuthRepo) monta o
 // conector MCP (rotas OAuth do SDK, /api/consentimento e /mcp); publicUrl vem de publicUrlFor().
 export function createApp({
   config, db, users, sessions, contexts, holidayProvider, autoRunner, limiter, now, audit,
@@ -373,7 +373,7 @@ export function createApp({
 
   app.use(express.json({ limit: '1mb' }));
 
-  const requireUser = registerAuth(app, { users, sessions, limiter, config, now });
+  const requireUser = registerAuth(app, { users, sessions, limiter, config, now, oauth });
   app.use(requireUser);
   // Contexto por usuário (serviços com as credenciais Jira dele); só para requisições logadas.
   app.use((req, _res, next) => {
@@ -390,7 +390,7 @@ export function createApp({
   registerAccount(app, { users, sessions, contexts, config, audit, limiter, makeJiraClient, validateAnthropicKey, oauth });
   registerAdmin(app, { users, sessions, contexts, config, audit, oauth });
   if (mcp) {
-    const provider = createOAuthProvider({ oauth, users, now });
+    const provider = createOAuthProvider({ oauth, users, now, redirectHosts: mcp.redirectHosts });
     mountMcp(app, {
       ...mcp, provider, users, audit,
       serverDeps: { contexts, holidayProvider, autoRunner, ...(now ? { now } : {}), ...mcp.serverDeps },

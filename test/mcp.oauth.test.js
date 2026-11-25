@@ -300,3 +300,31 @@ test('atrás do proxy (publicHost) o rate limit do SDK aceita X-Forwarded-For se
   } finally { console.error = orig; }
   assert.deepEqual(errors.filter((e) => /X-Forwarded-For|ERR_ERL/.test(e)), []);
 });
+
+test('registro: redirect_uri só em hosts permitidos (padrão claude.ai/claude.com) ou loopback', async () => {
+  const t = await makeTestApp({ mcp: true });
+  const evil = await register(t, { redirect_uris: ['https://evil.example/cb'] });
+  assert.equal(evil.status, 400);
+  assert.equal(evil.body.error, 'invalid_client_metadata');
+  assert.equal((await register(t, { redirect_uris: ['https://claude.ai.evil.example/cb'] })).status, 400);
+  assert.equal((await register(t, { redirect_uris: [REDIRECT, 'https://evil.example/cb'] })).status, 400);
+  assert.equal((await register(t, { redirect_uris: ['https://claude.ai/api/mcp/auth_callback'] })).status, 201);
+  assert.equal((await register(t, { redirect_uris: ['https://claude.com/api/mcp/auth_callback'] })).status, 201);
+  assert.equal((await register(t, { redirect_uris: ['http://claude.ai/api/mcp/auth_callback'] })).status, 400);
+  assert.equal((await register(t, { redirect_uris: ['http://[::1]:6274/cb'] })).status, 201);
+});
+
+test('registro: MCP_REDIRECT_HOSTS (redirectHosts) substitui a lista padrão', async () => {
+  const t = await makeTestApp({ mcp: { redirectHosts: ['cliente.example'] } });
+  assert.equal((await register(t, { redirect_uris: ['https://cliente.example/cb'] })).status, 201);
+  assert.equal((await register(t, { redirect_uris: [REDIRECT] })).status, 400);
+  assert.equal((await register(t, { redirect_uris: ['http://localhost:6274/cb'] })).status, 201);
+});
+
+test('authorize: cliente antigo com redirect_uri fora da lista é recusado sem redirecionar', async () => {
+  const t = await makeTestApp({ mcp: true });
+  t.oauth.saveClient({ client_id: 'velho', redirect_uris: ['https://evil.example/cb'], client_name: 'Claude', token_endpoint_auth_method: 'none' });
+  const res = await fetch(authorizeUrl(t, 'velho', pkce().challenge, { redirect_uri: 'https://evil.example/cb' }), { redirect: 'manual' });
+  assert.equal(res.status, 400);
+  assert.equal(res.headers.get('location'), null);
+});

@@ -11,20 +11,22 @@ import { createUserRepo } from '../src/db/users.js';
 import { createSessionRepo } from '../src/db/sessions.js';
 import { createRateLimiter } from '../src/auth/rateLimit.js';
 import { hashPassword } from '../src/auth/passwords.js';
+import { createOAuthRepo } from '../src/db/oauth.js';
 
 const servers = [];
 after(() => servers.forEach((s) => s.close()));
 
 const SENHA = 'senha-bem-longa-1';
 
-async function start({ publicHost, clock } = {}) {
+async function start({ publicHost, clock, withOAuth = false } = {}) {
   const db = openDb(':memory:');
   const users = createUserRepo(db, randomBytes(32));
   const sessions = createSessionRepo(db, clock?.now);
   const limiter = createRateLimiter({ max: 5, windowMs: 15 * 60 * 1000 });
   const config = { baseUrl: 'https://x.atlassian.net', email: 'e@x', tokenConfigured: true, ...(publicHost ? { publicHost } : {}) };
   const contexts = { forUser: () => ({ worklogService: { async listTasks() { return []; } }, secrets: { tokenStatus: 'missing' } }), invalidate() {} };
-  const app = createApp({ config, db, users, sessions, contexts, limiter, now: clock?.now });
+  const oauth = withOAuth ? createOAuthRepo(db) : undefined;
+  const app = createApp({ config, db, users, sessions, contexts, limiter, now: clock?.now, ...(oauth ? { oauth } : {}) });
   const server = await new Promise((r) => { const s = app.listen(0, () => r(s)); });
   servers.push(server);
   const port = server.address().port;
@@ -43,7 +45,7 @@ async function start({ publicHost, clock } = {}) {
     req.on('error', reject);
     req.end();
   });
-  return { base, post, raw, users, sessions, ana };
+  return { base, post, raw, users, sessions, ana, oauth };
 }
 
 const cookieOf = (res) => (res.headers.get('set-cookie') ?? '').split(';')[0];
@@ -279,4 +281,28 @@ test('sem publicHost o X-Forwarded-For é ignorado no limite de login', async ()
   const { post } = await start();
   for (let i = 0; i < 5; i++) assert.equal((await post('/api/login', { email: 'ana@x.com', senha: 'errada-errada' }, { 'X-Forwarded-For': `203.0.113.${i + 10}` })).status, 401);
   assert.equal((await post('/api/login', { email: 'ana@x.com', senha: 'errada-errada' }, { 'X-Forwarded-For': '203.0.113.99' })).status, 429);
+});
+
+test('redefinir: também revoga os tokens OAuth (conector MCP) do usuário', async () => {
+  const { post, sessions, ana, oauth } = await start({ withOAuth: true });
+  oauth.saveClient({ client_id: 'cli-1', redirect_uris: ['https://claude.ai/cb'], client_name: 'Claude', token_endpoint_auth_method: 'none' });
+  const tok = oauth.issueTokens({ clientId: 'cli-1', userId: ana.id, scopes: [] });
+  assert.ok(oauth.verify(tok.access_token));
+  const { token } = sessions.createInvite({ role: 'admin', createdBy: ana.id, kind: 'reset', userId: ana.id, ttlMs: 3600_000 });
+  assert.equal((await post(`/api/redefinir/${token}`, { senha: 'nova-senha-longa' })).status, 200);
+  assert.equal(oauth.verify(tok.access_token), null);
+  assert.equal(oauth.refresh(tok.refresh_token, 'cli-1'), null);
+});
+
+test('login: limite por IP (30 tentativas em 15 min) além do limite por e-mail|IP', async () => {
+  const { post } = await start({ publicHost: 'cast-horas.duckdns.org' });
+  const xff = { 'X-Forwarded-For': '203.0.113.7' };
+  // 30 e-mails diferentes (nenhum chega ao limite de 5 do e-mail|IP): todas passam pelo limite.
+  for (let i = 0; i < 30; i++) {
+    assert.equal((await post('/api/login', { email: `u${i}@x.com`, senha: 'errada-errada' }, xff)).status, 401, `tentativa ${i + 1}`);
+  }
+  assert.equal((await post('/api/login', { email: 'outro@x.com', senha: 'errada-errada' }, xff)).status, 429);
+  // Mesmo a senha certa é barrada do mesmo IP; outro IP segue livre.
+  assert.equal((await post('/api/login', { email: 'ana@x.com', senha: SENHA }, xff)).status, 429);
+  assert.equal((await post('/api/login', { email: 'ana@x.com', senha: SENHA }, { 'X-Forwarded-For': '203.0.113.8' })).status, 200);
 });
