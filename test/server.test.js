@@ -291,6 +291,19 @@ test('worklog preview repassa horas por dia útil (perDay) e limita a 8h', async
   assert.equal(calls.length, 1);
 });
 
+test('worklog preview repassa o dia do dividir total e valida a data', async () => {
+  const { svc, calls } = fakeWorklog();
+  const { post } = await start({ worklogService: svc });
+  const items = [{ taskKey: 'QSENSE-1', minutes: 120, startDate: '2026-11-12' }];
+  assert.equal((await post('/api/worklog/preview', { ...okPreview, items })).status, 200);
+  assert.deepEqual(calls[0][1].items, items);
+  for (const startDate of ['12/11/2026', '2026-02-30', 5]) {
+    assert.equal((await post('/api/worklog/preview', { ...okPreview, items: [{ taskKey: 'QSENSE-1', minutes: 60, startDate }] })).status, 400, String(startDate));
+  }
+  assert.equal((await post('/api/worklog/preview', { ...okPreview, items: [{ taskKey: 'QSENSE-1', minutes: 60, startDate: '2026-11-12', perDay: true }] })).status, 400);
+  assert.equal(calls.length, 1);
+});
+
 test('worklog preview valida período, horas e expediente', async () => {
   const { svc, calls } = fakeWorklog();
   const { post } = await start({ worklogService: svc });

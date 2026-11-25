@@ -112,7 +112,7 @@ function renderEpics() {
     return;
   }
   box.replaceChildren(...state.epics.map((e) => {
-    const ui = state.ui.get(e.key) ?? { split: false, total: '', pct: 30, hours: {}, checked: {}, perDay: {} };
+    const ui = state.ui.get(e.key) ?? { split: false, total: '', pct: 30, day: isoLocal(new Date()), hours: {}, checked: {}, perDay: {} };
     state.ui.set(e.key, ui);
     const head = el('div', { class: 'ep-row' },
       el('strong', {}, link(e.key, e.url), ` - ${e.summary}`),
@@ -124,6 +124,8 @@ function renderEpics() {
     if (ui.split) {
       const total = el('input', { value: ui.total, placeholder: 'ex.: 4h', class: 'short' });
       const pct = el('input', { type: 'number', min: 0, max: 100, step: 5, value: ui.pct, class: 'short' });
+      const day = el('input', { type: 'date', value: ui.day, title: 'Dia em que as horas começam. Se o dia passar de 8h somando os outros apontamentos, a sobra vai para o próximo dia útil.' });
+      day.addEventListener('input', () => { ui.day = day.value; });
       const info = el('span', { class: 'muted' });
       const update = () => {
         ui.total = total.value; ui.pct = Number(pct.value);
@@ -136,7 +138,9 @@ function renderEpics() {
       total.addEventListener('input', update);
       pct.addEventListener('input', update);
       update();
-      body = el('div', { class: 'task-row' }, el('label', { class: 'inline' }, 'Total', total), el('label', { class: 'inline' }, '% Análise', pct), info);
+      body = el('div', {},
+        el('div', { class: 'task-row' }, el('label', { class: 'inline' }, 'Dia do apontamento', day), el('label', { class: 'inline' }, 'Total', total), el('label', { class: 'inline' }, '% Análise', pct), info),
+        el('div', { class: 'muted' }, 'Até 8h no dia, somando os apontamentos de outras tarefas; a sobra vai para o próximo dia útil.'));
     } else {
       body = el('div', {}, ...e.tasks.map((t) => {
         const c = hoursControls(ui, t.key);
@@ -160,10 +164,11 @@ function readItems() {
       if (!ui.total) continue;
       const t = parseDuration(ui.total);
       if (!t) throw new Error(`${e.key}: total de horas inválido.`);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(ui.day ?? '')) throw new Error(`${e.key}: informe o dia do apontamento.`);
       const r = splitTotal(t, Math.min(Math.max(Number(ui.pct) || 0, 0), 100));
       const byModel = Object.fromEntries(e.tasks.map((x) => [x.model, x.key]));
-      if (r.analise && byModel.analise) items.push({ taskKey: byModel.analise, minutes: r.analise });
-      if (r.implementacao && byModel.implementacao) items.push({ taskKey: byModel.implementacao, minutes: r.implementacao });
+      if (r.analise && byModel.analise) items.push({ taskKey: byModel.analise, minutes: r.analise, startDate: ui.day });
+      if (r.implementacao && byModel.implementacao) items.push({ taskKey: byModel.implementacao, minutes: r.implementacao, startDate: ui.day });
     } else {
       for (const t of e.tasks) {
         if (!ui.checked[t.key]) continue;

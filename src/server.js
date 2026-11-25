@@ -191,8 +191,15 @@ function parsePreview(body = {}) {
     if (!isInt(i.minutes) || i.minutes < 15 || i.minutes % 15 || i.minutes > 200 * 60) throw new BadRequest(`Horas inválidas para ${i.taskKey} (blocos de 15 min).`);
     if (i.perDay !== undefined && typeof i.perDay !== 'boolean') throw new BadRequest(`Modo inválido para ${i.taskKey}.`);
     if (i.perDay && i.minutes > 480) throw new BadRequest(`Horas por dia de ${i.taskKey}: no máximo 8h.`);
+    if (i.startDate !== undefined) {
+      checkDate(i.startDate, `Dia do apontamento de ${i.taskKey}`);
+      if (i.perDay) throw new BadRequest(`${i.taskKey}: dia do apontamento não combina com horas por dia útil.`);
+    }
   }
-  return { items: items.map((i) => ({ taskKey: i.taskKey, minutes: i.minutes, ...(i.perDay ? { perDay: true } : {}) })), from, to, schedule: parseSchedule(body.schedule) };
+  return {
+    items: items.map((i) => ({ taskKey: i.taskKey, minutes: i.minutes, ...(i.perDay ? { perDay: true } : {}), ...(i.startDate ? { startDate: i.startDate } : {}) })),
+    from, to, schedule: parseSchedule(body.schedule),
+  };
 }
 
 function parseEntries(entries) {

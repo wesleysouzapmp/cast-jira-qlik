@@ -200,6 +200,13 @@ test('preview com perDay gera as horas em cada dia útil e informa dias sem espa
   assert.ok(r.entries.every((e) => e.comment.length > 10));
 });
 
+test('preview com dia lê os apontamentos dos dias seguintes para encaixar a sobra', async () => {
+  const { svc } = setup({ worklogs: { 'QSENSE-2': [{ id: '1', author: { accountId: ME }, started: '2026-11-16T08:00:00.000-0300', timeSpentSeconds: 6 * 3600 }] } });
+  const r = await svc.preview({ items: [{ taskKey: 'QSENSE-1', minutes: 600, startDate: '2026-11-13' }], from: '2026-11-13', to: '2026-11-13', schedule: DEFAULT_SCHEDULE });
+  assert.deepEqual(r.entries.map((e) => `${e.date} ${e.start} ${e.minutes}`), ['2026-11-13 08:00 240', '2026-11-13 13:00 240', '2026-11-16 14:00 120']);
+  assert.deepEqual(r.unallocated, []);
+});
+
 // ---- batch (manutenção de batidas) ----
 const mine = (id, started, minutes, text = 'c') => ({ id, author: { accountId: ME }, started, timeSpentSeconds: minutes * 60, comment: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] } });
 function batchSetup(extra = {}) {

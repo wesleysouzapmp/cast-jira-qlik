@@ -83,6 +83,31 @@ test('distribute devolve o que não coube', () => {
   assert.deepEqual(r.unallocated, [{ taskKey: 'Q-1', minutes: 520 }]);
 });
 
+// Dividir total: a demanda com dia (from) começa nele e o que sobra vai para os próximos dias úteis, mesmo após o "até".
+test('distribute com dia começa no dia escolhido e respeita 8h somando os outros apontamentos', () => {
+  const busy = [{ date: '2026-11-12', startMin: 8 * 60, endMin: 11 * 60 }];
+  const r = distribute({ demands: [{ ...d(360), from: '2026-11-12' }], from: '2026-11-09', to: '2026-11-13', schedule: S, busy });
+  assert.deepEqual(strip(r.entries), ['2026-11-12 11:00 60 Q-1', '2026-11-12 13:00 240 Q-1', '2026-11-13 08:00 60 Q-1']);
+  assert.deepEqual(r.unallocated, []);
+});
+
+test('distribute com dia passa a sobra para o próximo dia útil mesmo depois do até', () => {
+  const r = distribute({ demands: [{ ...d(600, 'Q-1'), from: '2026-11-13' }], from: '2026-11-13', to: '2026-11-13', schedule: S, busy: [] });
+  assert.deepEqual(strip(r.entries), ['2026-11-13 08:00 240 Q-1', '2026-11-13 13:00 240 Q-1', '2026-11-16 08:00 120 Q-1']);
+});
+
+test('distribute com dia convive com demanda do período', () => {
+  const r = distribute({ demands: [d(60, 'Q-9', 'avulsa'), { ...d(60, 'Q-1'), from: '2026-11-10' }, { ...d(60, 'Q-2', 'implementacao'), from: '2026-11-10' }], from: '2026-11-09', to: '2026-11-13', schedule: S, busy: [] });
+  assert.deepEqual(strip(r.entries), ['2026-11-09 08:00 60 Q-9', '2026-11-10 08:00 60 Q-1', '2026-11-10 09:00 60 Q-2']);
+});
+
+test('distribute com dia não passa de 31 dias a partir do dia', () => {
+  const r = distribute({ demands: [{ ...d(200 * 60), from: '2026-11-09' }], from: '2026-11-09', to: '2026-11-09', schedule: S, busy: [] });
+  assert.ok(r.entries.every((e) => e.date <= '2026-12-09'));
+  assert.equal(r.unallocated.length, 1);
+  assert.equal(r.unallocated[0].minutes, 200 * 60 - r.entries.reduce((n, e) => n + e.minutes, 0));
+});
+
 test('toJiraStarted', () => {
   assert.equal(toJiraStarted('2026-11-04', '08:00'), '2026-11-04T08:00:00.000-0300');
 });

@@ -65,18 +65,32 @@ function freeWindows(base, busy) {
   return wins.map(([a, b]) => [ceil15(a), floor15(b)]).filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
 }
 
+// Dias que uma demanda com dia (from) pode usar para a sobra, contando o próprio dia.
+export const ANCHOR_SPAN_DAYS = 31;
+
+// demands: { taskKey, model, minutes, perDay?, from? }.
+// - perDay: as mesmas horas em cada dia útil de from..to, alocadas primeiro.
+// - from (dividir total): começa nesse dia e o que sobra vai para os próximos dias úteis,
+//   mesmo depois de `to`, por até ANCHOR_SPAN_DAYS dias.
+// - as demais dividem o que sobra de from..to, em ordem.
+// O limite diário conta os apontamentos já existentes (busy) e os gerados aqui.
 export function distribute({ demands, from, to, schedule = DEFAULT_SCHEDULE, busy = [], holidays = new Set() }) {
   const s = { start: hhmmToMin(schedule.start), lunchStart: hhmmToMin(schedule.lunchStart), lunchEnd: hhmmToMin(schedule.lunchEnd), end: hhmmToMin(schedule.end) };
   const base = [[s.start, s.lunchStart], [s.lunchEnd, s.end]];
   const active = demands.filter((x) => x.minutes > 0);
-  // perDay: as mesmas horas em cada dia útil, alocadas primeiro; as demais dividem o que sobra.
   const daily = active.filter((x) => x.perDay);
-  const queue = active.filter((x) => !x.perDay).map((x) => ({ ...x, left: x.minutes }));
+  const queue = active.filter((x) => !x.perDay).map((x) => ({ ...x, left: x.minutes, ...(x.from ? { until: addDays(x.from, ANCHOR_SPAN_DAYS - 1) } : {}) }));
+  const eligible = (dem, date) => (dem.from ? date >= dem.from && date <= dem.until : date >= from && date <= to);
+  const first = [from, ...queue.filter((x) => x.from).map((x) => x.from)].sort()[0];
+  const last = [to, ...queue.filter((x) => x.until).map((x) => x.until)].sort().at(-1);
   const entries = [];
   const unallocated = [];
-  let qi = 0;
-  for (const date of businessDays(from, to, holidays)) {
-    if (qi >= queue.length && !daily.length) break;
+  for (const date of businessDays(first, last, holidays)) {
+    const inPeriod = date >= from && date <= to;
+    if (!queue.some((x) => x.left > 0) && !(daily.length && inPeriod)) {
+      if (date > to) break;
+      continue;
+    }
     const dayBusy = busy.filter((b) => b.date === date);
     let capacity = schedule.dailyLimit - dayBusy.reduce((sum, b) => sum + (b.endMin - b.startMin), 0);
     const wins = freeWindows(base, dayBusy);
@@ -97,15 +111,16 @@ export function distribute({ demands, from, to, schedule = DEFAULT_SCHEDULE, bus
       }
       return left;
     };
-    for (const dem of daily) {
-      const left = take(dem, dem.minutes);
-      if (left > 0) unallocated.push({ taskKey: dem.taskKey, minutes: left, date });
+    if (inPeriod) {
+      for (const dem of daily) {
+        const left = take(dem, dem.minutes);
+        if (left > 0) unallocated.push({ taskKey: dem.taskKey, minutes: left, date });
+      }
     }
-    while (qi < queue.length) {
-      const dem = queue[qi];
+    for (const dem of queue) {
+      if (dem.left <= 0 || !eligible(dem, date)) continue;
       dem.left = take(dem, dem.left);
-      if (dem.left > 0) break;
-      qi++;
+      if (dem.left > 0) break; // dia cheio
     }
   }
   for (const x of queue) if (x.left > 0) unallocated.push({ taskKey: x.taskKey, minutes: x.left });

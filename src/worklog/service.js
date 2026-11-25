@@ -4,7 +4,7 @@
 import { MODELS, QSENSE } from '../support/models.js';
 import { modelOfTask, toAdf } from '../support/render.js';
 import { JiraError, jiraMessage } from '../support/service.js';
-import { distribute, formatDuration, toJiraStarted, hhmmToMin, minToHhmm } from './time.js';
+import { distribute, formatDuration, toJiraStarted, hhmmToMin, minToHhmm, addDays, ANCHOR_SPAN_DAYS } from './time.js';
 import { isAdf, adfToText } from '../shared/flatten.js';
 import { pickComments, GENERIC_MODEL } from './comments.js';
 import { checkSlot } from './auto.js';
@@ -200,10 +200,14 @@ export function createWorklogService({ client, baseUrl, supportService, ai, rng 
     const scope = await scopeFor(items.map((i) => i.taskKey));
     const demands = items
       .filter((i) => i.minutes > 0)
-      .map((i) => ({ taskKey: i.taskKey, model: scope.tasks.get(i.taskKey).model, minutes: i.minutes, ...(i.perDay ? { perDay: true } : {}) }))
+      .map((i) => ({ taskKey: i.taskKey, model: scope.tasks.get(i.taskKey).model, minutes: i.minutes, ...(i.perDay ? { perDay: true } : {}), ...(i.startDate ? { from: i.startDate } : {}) }))
       .sort((a, b) => scope.tasks.get(a.taskKey).order - scope.tasks.get(b.taskKey).order);
-    const hol = new Set((await holidays.between(from, to)).keys());
-    const { entries, unallocated } = distribute({ demands, from, to, schedule, busy: await busy(from, to), holidays: hol });
+    // Com dia escolhido (dividir total), a sobra pode ir além de `to`: lê feriados e apontamentos até lá.
+    const starts = demands.filter((d) => d.from).map((d) => d.from);
+    const first = [from, ...starts].sort()[0];
+    const last = [to, ...starts.map((d) => addDays(d, ANCHOR_SPAN_DAYS - 1))].sort().at(-1);
+    const hol = new Set((await holidays.between(first, last)).keys());
+    const { entries, unallocated } = distribute({ demands, from, to, schedule, busy: await busy(first, last), holidays: hol });
 
     const byTask = new Map();
     for (const e of entries) byTask.set(e.taskKey, [...(byTask.get(e.taskKey) ?? []), e]);

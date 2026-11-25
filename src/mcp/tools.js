@@ -333,6 +333,9 @@ function registerWriteTools({ server, user, jira, handler, record, previews, aut
       + 'sugerido), as horas que não couberam (faltantes), as transições de status previstas e um previa_id '
       + `válido por ${ttlMin} minutos. Mostre a prévia à pessoa e, com o de acordo, chame confirmar_previa. `
       + 'horas aceita "2h", "1h 30m", "90m" (blocos de 15 min); por_dia = true aplica as horas em cada dia útil (até 8h). '
+      + 'Dividir um total entre tarefas (ex.: Análise e Implementação de um épico): ANTES de gerar, pergunte à pessoa '
+      + 'o dia do apontamento e informe-o em dia em cada item; as horas começam nesse dia, que não passa do limite diário '
+      + 'somando os apontamentos de outras tarefas, e o que sobrar vai para os próximos dias úteis, mesmo depois de ate. '
       + 'expediente (opcional): inicio, almoco_de, almoco_ate, fim em HH:MM e limite_diario (ex.: "8h"); '
       + 'padrão 08:00–12:00, 13:00–17:00 e 8h. Épicos não servem: use as tarefas de apoio (listar_tarefas) ou outras tarefas.',
     inputSchema: {
@@ -340,6 +343,7 @@ function registerWriteTools({ server, user, jira, handler, record, previews, aut
         tarefa: z.string().describe('Chave da tarefa, ex.: QSENSE-123.'),
         horas: z.string().describe('Horas, ex.: "2h", "1h 30m", "45m".'),
         por_dia: z.boolean().optional().describe('true: as horas valem para cada dia útil do período.'),
+        dia: z.string().optional().describe('Dia do apontamento (AAAA-MM-DD) ao dividir um total; pergunte à pessoa antes. A sobra vai para os próximos dias úteis.'),
       })).describe('Tarefas e horas a distribuir.'),
       de: dateArg('Data inicial'),
       ate: dateArg('Data final'),
@@ -365,7 +369,11 @@ function registerWriteTools({ server, user, jira, handler, record, previews, aut
       if (minutes === null || minutes < 15 || minutes > max) {
         throw new ToolError(`Horas inválidas para ${taskKey}: use blocos de 15 min até ${fmtMin(max)}${i?.por_dia ? ' por dia' : ''} (ex.: "2h", "1h 30m", "45m").`);
       }
-      return { taskKey, minutes, ...(i.por_dia ? { perDay: true } : {}) };
+      if (i.dia !== undefined) {
+        checkDate(i.dia, `Dia do apontamento de ${taskKey}`);
+        if (i.por_dia) throw new ToolError(`${taskKey}: use dia ou por_dia, não os dois.`);
+      }
+      return { taskKey, minutes, ...(i.por_dia ? { perDay: true } : {}), ...(i.dia ? { startDate: i.dia } : {}) };
     });
     const schedule = parseSchedule(expediente ?? {});
     if (!previews) throw new ToolError('As prévias não estão disponíveis neste servidor; tente novamente mais tarde ou use a tela Apontar horas.');

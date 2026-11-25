@@ -123,6 +123,20 @@ test('anotações: gerar_previa só leitura; gravações com destructiveHint', a
   await client.close();
 });
 
+test('gerar_previa com dia começa no dia e passa a sobra para o próximo dia útil', async () => {
+  const t = await setup();
+  const client = await connect(t);
+  const r = await call(client, 'gerar_previa', { itens: [{ tarefa: 'QSENSE-1', horas: '10h', dia: '2026-11-27' }], de: '2026-11-27', ate: '2026-11-27' });
+  assert.ok(!r.isError, r.content[0].text);
+  const p = parse(r);
+  assert.deepEqual(p.batidas.map((b) => `${b.data} ${b.inicio} ${b.minutos}`), ['2026-11-27 08:00 240', '2026-11-27 13:00 240', '2026-11-30 08:00 120']);
+  const bad = await call(client, 'gerar_previa', { itens: [{ tarefa: 'QSENSE-1', horas: '1h', dia: '27/11/2026' }], de: '2026-11-27', ate: '2026-11-27' });
+  assert.ok(bad.isError);
+  const tools = (await client.listTools()).tools;
+  assert.match(tools.find((x) => x.name === 'gerar_previa').description, /pergunte/i);
+  await client.close();
+});
+
 test('gerar_previa → confirmar_previa grava no Jira, troca o comentário e move a tarefa de apoio', async () => {
   const t = await setup();
   const client = await connect(t);
