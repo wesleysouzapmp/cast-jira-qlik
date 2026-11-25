@@ -12,7 +12,7 @@
 import { z } from 'zod';
 import { JiraError } from '../support/service.js';
 import { ScopeError } from '../worklog/service.js';
-import { closingPeriod, periodIndicators, DEFAULT_SCHEDULE } from '../worklog/time.js';
+import { closingPeriod, periodIndicators, parseDuration, DEFAULT_SCHEDULE } from '../worklog/time.js';
 import { localNow, summaryFor } from '../worklog/auto.js';
 
 const KEY_RE = /^[A-Z][A-Z0-9_]+-\d+$/;
@@ -148,16 +148,25 @@ export function registerTools(server, { user, ctx, holidays, autoRunner, publicU
     title: 'Indicadores do período',
     description: 'Indicadores de horas do período: dias úteis (seg–sex sem feriado), dias trabalhados '
       + '(úteis com apontamento), dias a trabalhar (úteis de hoje em diante sem apontamento), horas '
-      + 'previstas (8h por dia útil), executadas e saldo (previstas − executadas), em minutos e em HH:MM. '
+      + 'previstas (limite diário × dias úteis), executadas e saldo (previstas − executadas), em minutos e em HH:MM. '
       + 'Informe de e ate (AAAA-MM-DD, até 62 dias) ou fechamento "AAAA-MM": do dia 21 do mês anterior '
-      + 'ao dia 20 do mês informado. Fuso -03:00.',
+      + 'ao dia 20 do mês informado. Fuso -03:00. O limite diário padrão é 8h; a pessoa pode informar em '
+      + 'limite_diario o limite que usa na tela (ex.: "6h", "7h 30m", "450m").',
     inputSchema: {
       de: dateArg('Data inicial').optional(),
       ate: dateArg('Data final').optional(),
       fechamento: z.string().optional().describe('Mês de fechamento AAAA-MM (ex.: 2026-11 = 2026-10-21 a 2026-11-20).'),
+      limite_diario: z.string().max(20).optional().describe('Limite diário de horas, ex.: "8h", "7h 30m", "6" ou "450m" (de 1h a 24h). Padrão: 8h.'),
     },
     annotations: READ_ONLY,
-  }, handler(async ({ de, ate, fechamento }) => {
+  }, handler(async ({ de, ate, fechamento, limite_diario: limite }) => {
+    let dailyLimit = DEFAULT_SCHEDULE.dailyLimit;
+    if (limite !== undefined) {
+      dailyLimit = parseDuration(limite);
+      if (dailyLimit === null || dailyLimit < 60 || dailyLimit > 1440) {
+        throw new ToolError('Limite diário inválido: use de 1h a 24h, ex.: "8h", "7h 30m", "6" ou "450m".');
+      }
+    }
     let range;
     if (fechamento !== undefined) {
       if (de !== undefined || ate !== undefined) throw new ToolError('Informe fechamento ou de/ate, não os dois.');
@@ -173,9 +182,9 @@ export function registerTools(server, { user, ctx, holidays, autoRunner, publicU
       c.worklogService.myWorklogs(range.from, range.to),
       holidaySet(range.from, range.to),
     ]);
-    const r = periodIndicators({ ...range, today: today(), entries, holidays: hol, dailyLimit: DEFAULT_SCHEDULE.dailyLimit });
+    const r = periodIndicators({ ...range, today: today(), entries, holidays: hol, dailyLimit });
     return {
-      de: range.from, ate: range.to, hoje: today(),
+      de: range.from, ate: range.to, hoje: today(), limiteDiarioMin: dailyLimit,
       diasUteis: r.businessDays, diasTrabalhados: r.worked, diasATrabalhar: r.toWork,
       previstasMin: r.expectedMin, executadasMin: r.executedMin, saldoMin: r.balanceMin,
       previstas: hhmm(r.expectedMin), executadas: hhmm(r.executedMin), saldo: hhmm(r.balanceMin),
@@ -189,7 +198,7 @@ export function registerTools(server, { user, ctx, holidays, autoRunner, publicU
       + 'execução ("AAAA-MM-DD HH:MM", fuso -03:00) e a última execução registrada.',
     annotations: READ_ONLY,
   }, handler(async () => {
-    if (!autoRunner) throw new ToolError('Os apontamentos automáticos não estão disponíveis neste servidor.');
+    if (!autoRunner) throw new ToolError('Os apontamentos automáticos não estão disponíveis neste servidor; tente novamente mais tarde ou use a tela Apontar horas.');
     const s = await autoRunner.schedulerFor(user.id).status();
     return {
       desativado: Boolean(s.disabled),

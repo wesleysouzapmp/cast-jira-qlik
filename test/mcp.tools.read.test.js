@@ -152,6 +152,21 @@ test('indicadores: fechamento AAAA-MM usa 21 do mês anterior a 20 do mês, com 
   assert.equal(l.diasUteis, 5);
   assert.equal(l.diasATrabalhar, 3, 'hoje (25) em diante sem batida');
 
+  assert.equal(out.limiteDiarioMin, 480, 'padrão 8h');
+
+  const seis = parse(await call(client, 'indicadores', { fechamento: '2026-11', limite_diario: '6h' }));
+  assert.equal(seis.limiteDiarioMin, 360);
+  assert.equal(seis.previstasMin, 21 * 360);
+  assert.equal(seis.saldoMin, 21 * 360 - 90);
+  assert.equal(seis.previstas, '126:00');
+  assert.equal(parse(await call(client, 'indicadores', { fechamento: '2026-11', limite_diario: '7h 30m' })).limiteDiarioMin, 450);
+
+  for (const ruim of ['abc', '30m', '25h']) {
+    const r2 = await call(client, 'indicadores', { fechamento: '2026-11', limite_diario: ruim });
+    assert.equal(r2.isError, true, ruim);
+    assert.match(r2.content[0].text, /Limite diário inválido/);
+  }
+
   const errado = await call(client, 'indicadores', { fechamento: '2026-13' });
   assert.equal(errado.isError, true);
   await client.close();
@@ -178,6 +193,15 @@ test('usuário sem token do Jira recebe a mensagem orientando', async () => {
   assert.equal(r.content[0].text, `Configure seu token do Jira em Minha conta: ${t.base}/conta.html`);
   // listar_regras não depende do Jira.
   assert.ok(!(await call(client, 'listar_regras')).isError);
+  await client.close();
+});
+
+test('listar_regras sem agendador: erro com próximo passo', async () => {
+  const t = await setup({ scheduler: undefined });
+  const client = await connect(t);
+  const r = await call(client, 'listar_regras');
+  assert.equal(r.isError, true);
+  assert.match(r.content[0].text, /não estão disponíveis.*tente novamente mais tarde/);
   await client.close();
 });
 
