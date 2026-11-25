@@ -224,3 +224,10 @@ label.inline { display: inline-flex; align-items: center; gap: 6px; }
 #autoPanel details { margin-top: 8px; }
 #autoPanel .ok { color: var(--ok); font-weight: 600; }
 #autoPanel .bad, #autoBanner { color: var(--err); }
+
+/* Páginas de acesso (login / convite) */
+.auth-page { max-width: 380px; margin: 8vh auto 0; padding: 0 16px; }
+.auth-page h1 { margin-bottom: 4px; }
+.auth-page form { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
+.auth-page .msg { margin: 10px 0 0; min-height: 1.4em; }
+.auth-page .msg.err { color: var(--err); }

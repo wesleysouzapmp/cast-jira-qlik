@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Entrar</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="auth-page">
+    <section class="panel">
+      <h1>Entrar</h1>
+      <p class="muted">Use o e-mail e a senha da sua conta.</p>
+      <form id="form" autocomplete="on">
+        <label>E-mail
+          <input id="email" name="email" type="email" autocomplete="username" required autofocus>
+        </label>
+        <label>Senha
+          <input id="senha" name="senha" type="password" autocomplete="current-password" required>
+        </label>
+        <button class="primary" type="submit" id="enviar">Entrar</button>
+      </form>
+      <p id="msg" class="msg err" role="alert"></p>
+    </section>
+  </main>
+  <script type="module" src="login.js"></script>
+</body>
+</html>

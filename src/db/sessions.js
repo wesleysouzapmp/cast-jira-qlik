@@ -17,6 +17,7 @@ export function createSessionRepo(db, now = () => Date.now()) {
     inviteInsert: db.prepare('INSERT INTO invites (token_hash, role, created_by, expires_at, kind, user_id) VALUES (?, ?, ?, ?, ?, ?)'),
     inviteTake: db.prepare('UPDATE invites SET used_at = ? WHERE token_hash = ? AND kind = ? AND used_at IS NULL AND expires_at > ?'),
     inviteGet: db.prepare('SELECT * FROM invites WHERE token_hash = ?'),
+    invitePeek: db.prepare('SELECT * FROM invites WHERE token_hash = ? AND kind = ? AND used_at IS NULL AND expires_at > ?'),
   };
 
   return {
@@ -56,6 +57,12 @@ export function createSessionRepo(db, now = () => Date.now()) {
       const token = randomToken();
       q.inviteInsert.run(sha256(token), role, createdBy, now() + ttlMs, kind, userId);
       return { token };
+    },
+    // Só consulta (não consome): convite/reset ainda válido ou null.
+    peekInvite(token, kind) {
+      if (!token) return null;
+      const r = q.invitePeek.get(sha256(token), kind, now());
+      return r ? { role: r.role, kind: r.kind, userId: r.user_id, expiresAt: r.expires_at } : null;
     },
     // Atômico: um único UPDATE condicional; só quem muda a linha leva o convite.
     takeInvite(token, kind) {

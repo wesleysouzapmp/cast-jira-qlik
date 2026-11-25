@@ -5,6 +5,7 @@ import { paginate } from './paginators.js';
 import { JiraError } from './support/service.js';
 import { ConflictError, ScopeError } from './worklog/service.js';
 import { AiError } from './worklog/ai.js';
+import { registerAuth } from './web/auth.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../public', import.meta.url));
 const SHARED_DIR = fileURLToPath(new URL('./shared', import.meta.url));
@@ -263,17 +264,44 @@ function registerAutoRoutes(app, { scheduler, config }) {
   app.post('/api/auto/run', handle(async () => ({ results: await scheduler.tick() })));
 }
 
-export function createApp({ client, config, supportService, worklogService, holidayProvider, favoritesStore, autoScheduler }) {
+export function createApp({ client, config, supportService, worklogService, holidayProvider, favoritesStore, autoScheduler, users, sessions, limiter }) {
   const app = express();
+  const stripPort = (h) => String(h ?? '').replace(/:\d+$/, '').toLowerCase();
+  const publicHost = stripPort(config.publicHost);
 
-  // Proteção contra DNS rebinding: só atende requisições endereçadas a localhost.
+  // Cabeçalhos de segurança em todas as respostas.
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'same-origin');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Content-Security-Policy', "default-src 'self'");
+    next();
+  });
+
+  // Proteção contra DNS rebinding: só atende localhost (e o host público configurado, se houver).
   app.use((req, res, next) => {
-    const host = String(req.headers.host ?? '').replace(/:\d+$/, '').toLowerCase();
-    if (LOCAL_HOSTS.has(host)) return next();
+    const host = stripPort(req.headers.host);
+    if (LOCAL_HOSTS.has(host) || (publicHost && host === publicHost)) return next();
     res.status(403).json({ error: 'Acesso permitido só via localhost.' });
   });
 
+  // CSRF: método que altera estado com Origin de outro site é recusado.
+  app.use((req, res, next) => {
+    if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
+    const origin = req.headers.origin;
+    if (origin === undefined) return next();
+    let originHost = null;
+    try { originHost = new URL(origin).host.toLowerCase(); } catch { /* inválido */ }
+    if (originHost && originHost === String(req.headers.host ?? '').toLowerCase()) return next();
+    res.status(403).json({ error: 'Origem não permitida.' });
+  });
+
   app.use(express.json({ limit: '1mb' }));
+
+  if (users && sessions) {
+    const requireUser = registerAuth(app, { users, sessions, limiter, config });
+    app.use(requireUser);
+  }
 
   app.get('/api/config', (_req, res) => {
     res.json({ baseUrl: config.baseUrl, email: config.email, tokenConfigured: Boolean(config.tokenConfigured) });
@@ -333,5 +361,7 @@ export function createApp({ client, config, supportService, worklogService, holi
   app.get('/lib/time.js', (_req, res) => res.type('application/javascript').sendFile(WORKLOG_TIME));
   app.use('/lib', express.static(SHARED_DIR));
   app.use(express.static(PUBLIC_DIR));
+  // 404 próprio: o handler padrão do Express sobrescreve o Content-Security-Policy.
+  app.use((req, res) => res.status(404).type('text/plain').send(`Cannot ${req.method} ${req.path}`));
   return app;
 }
