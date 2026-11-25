@@ -90,7 +90,7 @@ As cinco situações mais prováveis de causar problema que nenhum teste de tare
 
 ## Fase A: base
 
-### Tarefa 1: Express 5
+### Task 1: Express 5
 
 **Arquivos:** `package.json`, `src/server.js`, os testes `test/server*.test.js` que quebrarem.
 
@@ -102,7 +102,7 @@ As cinco situações mais prováveis de causar problema que nenhum teste de tare
 - [ ] Rodar `npm test`. Esperado: 230/230.
 - [ ] Commit: `chore: Express 5`.
 
-### Tarefa 2: criptografia, senhas e tokens
+### Task 2: criptografia, senhas e tokens
 
 **Arquivos:**
 - criar `src/auth/crypto.js`, `src/auth/passwords.js` e `src/auth/tokens.js`;
@@ -129,7 +129,7 @@ As cinco situações mais prováveis de causar problema que nenhum teste de tare
 - [ ] Rodar o mesmo comando. Esperado: tudo passa.
 - [ ] Commit.
 
-### Tarefa 3: banco e migrações
+### Task 3: banco e migrações
 
 **Arquivos:**
 - criar `src/db/index.js` e `src/db/migrations.js`;
@@ -150,7 +150,7 @@ As cinco situações mais prováveis de causar problema que nenhum teste de tare
 - [ ] Ver falhar, implementar e ver passar.
 - [ ] Commit.
 
-### Tarefa 4: repositórios de usuários, sessões e convites
+### Task 4: repositórios de usuários, sessões e convites
 
 **Arquivos:**
 - criar `src/db/users.js` e `src/db/sessions.js`;
@@ -196,7 +196,7 @@ Produz também `createSessionRepo(db)`, com estes métodos:
 - [ ] Ver falhar, implementar com *statements* preparados e ver passar.
 - [ ] Commit.
 
-### Tarefa 5: dados por usuário (favoritos e regras)
+### Task 5: dados por usuário (favoritos e regras)
 
 **Arquivos:**
 - criar `src/db/userData.js`;
@@ -225,7 +225,7 @@ Produz também `createSessionRepo(db)`, com estes métodos:
 
 ## Fase B: web multiusuário
 
-### Tarefa 6: contexto por usuário
+### Task 6: contexto por usuário
 
 **Arquivos:**
 - criar `src/context.js`;
@@ -247,7 +247,7 @@ Produz também `createSessionRepo(db)`, com estes métodos:
 - [ ] Ver falhar, implementar e ver passar.
 - [ ] Commit.
 
-### Tarefa 7: sessão, login, convite e checagem de Host
+### Task 7: sessão, login, convite e checagem de Host
 
 **Arquivos:**
 - criar `src/web/auth.js`, `src/auth/rateLimit.js`, `public/login.html`, `public/login.js`, `public/convite.html` e `public/convite.js`;
@@ -286,7 +286,7 @@ Produz também `createSessionRepo(db)`, com estes métodos:
 - [ ] Ver falhar, implementar e ver passar. As páginas seguem o estilo de `style.css`.
 - [ ] Commit.
 
-### Tarefa 8: rotas atuais sob `req.ctx`
+### Task 8: rotas atuais sob `req.ctx`
 
 **Arquivos:**
 - modificar `src/server.js`;
@@ -309,7 +309,7 @@ Produz também `createSessionRepo(db)`, com estes métodos:
 - [ ] Rodar `npm test`. Esperado: tudo passa, com o mesmo número de casos ou mais.
 - [ ] Commit.
 
-### Tarefa 9: Minha conta e administração
+### Task 9: Minha conta e administração
 
 **Arquivos:**
 - criar `src/web/account.js`, `src/web/admin.js`, `public/conta.html`, `public/conta.js`, `public/admin.html`, `public/admin.js`, `public/session.js`;
@@ -355,7 +355,7 @@ O admin não pode desativar a si mesmo.
 - [ ] Verificação manual no mock (depois da Tarefa 17): login, configurar token, convite.
 - [ ] Commit.
 
-### Tarefa 10: agendador multiusuário
+### Task 10: agendador multiusuário
 
 **Arquivos:**
 - criar `src/worklog/autoRunner.js`;
@@ -385,7 +385,7 @@ O admin não pode desativar a si mesmo.
 
 ## Fase C: MCP
 
-### Tarefa 11: SDK do MCP e repositório OAuth
+### Task 11: SDK do MCP e repositório OAuth
 
 **Arquivos:**
 - `package.json`: adicionar `@modelcontextprotocol/sdk@^1.32` e `zod`;
@@ -417,7 +417,7 @@ O admin não pode desativar a si mesmo.
 - [ ] Ver falhar, implementar e ver passar.
 - [ ] Commit.
 
-### Tarefa 12: provedor OAuth, consentimento e montagem
+### Task 12: provedor OAuth, consentimento e montagem
 
 **Arquivos:**
 - criar `src/mcp/oauthProvider.js`, `src/mcp/index.js`, `public/consentimento.html` e `public/consentimento.js`;
@@ -455,7 +455,7 @@ O admin não pode desativar a si mesmo.
 - [ ] Ver falhar, implementar e ver passar.
 - [ ] Commit.
 
-### Tarefa 13: ferramentas de leitura
+### Task 13: ferramentas de leitura
 
 **Arquivos:**
 - criar `src/mcp/tools.js` (leitura);
@@ -481,7 +481,7 @@ O admin não pode desativar a si mesmo.
 - [ ] Ver falhar, implementar e ver passar.
 - [ ] Commit.
 
-### Tarefa 14: ferramentas de gravação e auditoria
+### Task 14: ferramentas de gravação e auditoria
 
 **Arquivos:**
 - modificar `src/mcp/tools.js`;
@@ -519,7 +519,7 @@ O admin não pode desativar a si mesmo.
 
 ## Fase D: ligação, migração e implantação
 
-### Tarefa 15: ligação em `src/index.js` e mock
+### Task 15: ligação em `src/index.js` e mock
 
 **Arquivos:**
 - modificar `src/index.js` e `scripts/mock-support.js`;
@@ -542,7 +542,7 @@ O admin não pode desativar a si mesmo.
 - [ ] Subir o mock: login como teste, configurar token, Apontar horas, regras e Minha conta. Conferir no navegador e no console.
 - [ ] Commit.
 
-### Tarefa 16: teste de isolamento ponta a ponta
+### Task 16: teste de isolamento ponta a ponta
 
 **Arquivo:** `test/isolation.test.js`.
 
@@ -557,7 +557,7 @@ O admin não pode desativar a si mesmo.
 - [ ] Rodar. Se algo passar indevidamente, corrigir na origem (repositório ou rota) com um teste específico.
 - [ ] Commit.
 
-### Tarefa 17: CLI de bootstrap e migração
+### Task 17: CLI de bootstrap e migração
 
 **Arquivos:**
 - criar `src/admin.js`;
@@ -581,7 +581,7 @@ O admin não pode desativar a si mesmo.
 - [ ] Ver falhar, implementar e ver passar.
 - [ ] Commit.
 
-### Tarefa 18: implantação (Caddy, DuckDNS, portas, backup)
+### Task 18: implantação (Caddy, DuckDNS, portas, backup)
 
 **Arquivos:**
 - modificar `deploy/oracle/setup.sh` e `deploy/oracle/README.md`;
@@ -610,7 +610,7 @@ O admin não pode desativar a si mesmo.
 - [ ] Rodar `bash -n` nos scripts e repetir o teste em Docker (`ubuntu:24.04`, com `systemctl` simulado) da entrega anterior. Esperado: `Caddyfile` gerado, regras de `iptables` presentes e `.env` com `APP_SECRET_KEY`.
 - [ ] Commit.
 
-### Tarefa 19: implantação real e verificação
+### Task 19: implantação real e verificação
 
 Esta tarefa não tem código; usa o painel Terminal, a OCI CLI e SSH.
 
