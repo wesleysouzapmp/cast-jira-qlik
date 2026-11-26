@@ -51,7 +51,7 @@ function renderItems() {
     box.addEventListener('change', () => { box.checked ? state.selected.add(i.key) : state.selected.delete(i.key); updateButtons(); });
     const open = !state.collapsed.has(i.key);
     const toggle = i.isEpic
-      ? el('button', { class: 'tree-toggle', title: open ? 'Recolher' : 'Expandir', 'aria-expanded': String(open) }, open ? '▾' : '▸')
+      ? el('button', { class: 'tree-toggle', title: open ? 'Recolher' : 'Expandir', 'aria-expanded': String(open) }, el('span', { class: 'i i-chevron', 'aria-hidden': 'true' }))
       : el('span', { class: 'tree-toggle' });
     if (i.isEpic) toggle.addEventListener('click', () => { open ? state.collapsed.add(i.key) : state.collapsed.delete(i.key); renderItems(); });
     rows.push(el('tr', { class: i.isEpic ? 'tree-root' : 'tree-root dim' },

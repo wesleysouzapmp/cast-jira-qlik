@@ -126,9 +126,25 @@ test('API protegida sem cookie dá 401; página protegida dá 302 para o login',
   assert.equal(raiz.status, 302);
 });
 
+// Prefixo público seguido de "..": o servidor de arquivos normaliza o caminho e entregaria a página protegida.
+test('prefixo público com ".." não libera página ou API protegida', async () => {
+  const { base } = await start();
+  const raw = (path) => new Promise((res, rej) => {
+    const u = new URL(base);
+    const r = http.request({ host: u.hostname, port: u.port, path, method: 'GET' }, (x) => { x.resume(); res(x.statusCode); });
+    r.on('error', rej);
+    r.end();
+  });
+  for (const p of ['/fonts/../apontar.html', '/fonts/%2e%2e/apontar.html', '/fonts/..%2fapontar.html', '/api/convite/../../apontar.html', '/fonts/../api/conta']) {
+    assert.ok([302, 401, 400, 404].includes(await raw(p)), p);
+    assert.notEqual(await raw(p), 200, p);
+  }
+  assert.equal(await raw('/fonts/geist.woff2'), 200);
+});
+
 test('rotas públicas respondem sem cookie', async () => {
   const { base } = await start();
-  for (const p of ['/login.html', '/login.js', '/convite.html', '/convite.js', '/style.css']) {
+  for (const p of ['/login.html', '/login.js', '/convite.html', '/convite.js', '/style.css', '/fonts/geist.woff2']) {
     assert.equal((await fetch(base + p, { redirect: 'manual' })).status, 200, p);
   }
 });
@@ -262,7 +278,9 @@ test('todos os public/*.js têm sintaxe válida', () => {
 
 test('public/ não usa estilo inline (CSP default-src self)', () => {
   const dir = fileURLToPath(new URL('../public/', import.meta.url));
-  for (const f of readdirSync(dir)) {
+  for (const ent of readdirSync(dir, { withFileTypes: true })) {
+    if (!ent.isFile()) continue; // fonts/ e icons/ são pastas de recursos
+    const f = ent.name;
     const txt = readFileSync(dir + f, 'utf8');
     if (f.endsWith('.js')) assert.doesNotMatch(txt, /setAttribute\(\s*['"]style['"]/, `${f}: setAttribute style`);
     if (f.endsWith('.html')) assert.doesNotMatch(txt, /\sstyle\s*=/i, `${f}: atributo style=`);

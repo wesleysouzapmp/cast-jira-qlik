@@ -108,6 +108,15 @@ export function createCalendar({ els, getLimit, getPeriod, onPick, onOpenDay, on
     return '';
   }
 
+  // Mapa de calor: intensidade pela fração do limite diário; h4 = limite atingido ou passado.
+  function heatOf(total) {
+    const limit = getLimit();
+    if (!total || !limit) return '';
+    const r = total / limit;
+    return r >= 1 ? 'h4' : r >= 0.5 ? 'h3' : r >= 0.25 ? 'h2' : 'h1';
+  }
+  const overTag = (total) => (getLimit() && total > getLimit() ? el('span', { class: 'over-tag', title: 'Acima do limite diário' }, `+${formatDuration(total - getLimit())}`) : null);
+
   function inPeriod(date) {
     const { from, to } = getPeriod();
     return from && to && date >= from && date <= to;
@@ -153,10 +162,10 @@ export function createCalendar({ els, getLimit, getPeriod, onPick, onOpenDay, on
       const list = days.get(date) ?? [];
       const total = list.reduce((s, e) => s + e.minutes, 0);
       const cell = el('button', {
-        class: ['cal-day', !inside(date) ? 'out' : '', isWeekend(date) ? 'weekend' : '', hol ? 'holiday' : '', date === todayIso() ? 'today' : '', inPeriod(date) ? 'in-period' : '', statusOf(date, total)].filter(Boolean).join(' '),
+        class: ['cal-day', !inside(date) ? 'out' : '', isWeekend(date) ? 'weekend' : '', hol ? 'holiday' : '', date === todayIso() ? 'today' : '', inPeriod(date) ? 'in-period' : '', statusOf(date, total), heatOf(total)].filter(Boolean).join(' '),
         title: `${fmtDate(date)}${hol ? ` — ${hol}` : ''} — ${total ? formatDuration(total) : 'sem apontamentos'}. Clique para ver as batidas; Shift+clique estende o período.`,
       },
-      el('span', { class: 'cal-num' }, Number(date.slice(8))),
+      el('span', { class: 'cal-top' }, el('span', { class: 'cal-num' }, Number(date.slice(8))), overTag(total)),
       hol ? el('span', { class: 'cal-hol' }, hol) : null,
       total ? el('span', { class: 'cal-total' }, formatDuration(total)) : null,
       ...list.slice(0, 3).map((e) => el('span', { class: 'cal-chip' }, `${e.issueKey} · ${formatDuration(e.minutes)}`)),
@@ -182,7 +191,7 @@ export function createCalendar({ els, getLimit, getPeriod, onPick, onOpenDay, on
       tracks.push('minmax(110px,1fr)');
       const list = days.get(date) ?? [];
       const total = list.reduce((s, e) => s + e.minutes, 0);
-      const head = el('button', { class: ['cal-whead', isWeekend(date) ? 'weekend' : '', hol ? 'holiday' : '', inPeriod(date) ? 'in-period' : '', statusOf(date, total)].filter(Boolean).join(' ') },
+      const head = el('button', { class: ['cal-whead', isWeekend(date) ? 'weekend' : '', hol ? 'holiday' : '', inPeriod(date) ? 'in-period' : '', statusOf(date, total), heatOf(total)].filter(Boolean).join(' ') },
         el('span', {}, `${WEEKDAYS[weekdayIdx(date)]} ${date.slice(8)}/${date.slice(5, 7)}${hol ? ` · ${hol}` : ''}`),
         el('strong', {}, total ? formatDuration(total) : '—'));
       head.addEventListener('click', clickHandler(date));

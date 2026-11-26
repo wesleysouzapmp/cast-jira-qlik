@@ -8,13 +8,16 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">Apontar horas <span class="muted">→ Clockwork</span></div>
+    <a class="brand" href="apontar.html" aria-label="cast-jira-qlik, início"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect class="bar" x="1" y="3" width="3" height="14" rx="1"/><rect class="bar" x="6" y="7" width="3" height="10" rx="1"/><rect class="bar on" x="11" y="10" width="3" height="7" rx="1"/><rect class="bar" x="16" y="5" width="3" height="12" rx="1"/></svg>cast-jira-qlik</a>
     <nav class="pages" aria-label="Páginas">
-      <a href="index.html">API Tester</a>
-      <a href="apoio.html">Tarefas de apoio</a>
+      <span class="nav-group">Rotina</span>
       <a href="apontar.html" aria-current="page">Apontar horas</a>
+      <a href="apoio.html">Tarefas de apoio</a>
+      <span class="nav-group">UST</span>
       <a href="catalogo.html">Catálogo de UST</a>
       <a href="tamanhos.html">Tamanhos e UST</a>
+      <span class="nav-group">Integração Qlik</span>
+      <a href="index.html">API Tester</a>
     </nav>
     <div class="conn">
       <span id="baseUrl" class="mono"></span>
@@ -28,7 +31,7 @@
     <a href="conta.html">Configure em Minha conta</a>.
   </div>
 
-  <main class="page stack">
+  <main class="page stack" id="apontarMain">
     <section class="panel" id="kpiPanel">
       <div class="actions"><h1>Indicadores</h1><span id="kpiPeriod" class="muted"></span></div>
       <div id="kpis" class="kpis"><p class="muted">Carregando…</p></div>
@@ -40,9 +43,9 @@
     <section class="panel" id="calPanel">
       <div class="actions">
         <h1>Meus apontamentos</h1>
-        <button id="calPrev" aria-label="Anterior">◀</button>
+        <button id="calPrev" class="icon" aria-label="Anterior"><span class="i i-chevron-left" aria-hidden="true"></span></button>
         <button id="calToday">Hoje</button>
-        <button id="calNext" aria-label="Próximo">▶</button>
+        <button id="calNext" class="icon" aria-label="Próximo"><span class="i i-chevron-right" aria-hidden="true"></span></button>
         <strong id="calLabel"></strong>
         <span class="spacer"></span>
         <div class="seg" role="group" aria-label="Visão">
@@ -58,18 +61,18 @@
           <label class="inline">dia final <input type="number" id="calCloseEnd" class="short" min="1" max="31" step="1"></label>
         </span>
       </div>
-      <p class="help">Seus apontamentos no Jira (os mesmos do My Work Overview do Clockwork). Clique num dia para ver e ajustar as batidas; Shift+clique estende o período do apontamento até o dia clicado. Cores do dia em relação ao limite diário: <span class="legend ok">na meta</span> <span class="legend under">abaixo</span> <span class="legend over">acima</span>.</p>
+      <p class="help">Seus apontamentos no Jira (os mesmos do My Work Overview do Clockwork). Clique num dia para ver e ajustar as batidas; Shift+clique estende o período do apontamento até o dia clicado. Quanto mais horas no dia, mais forte o azul: <span class="heat-legend">0h <i class="l0"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i> limite</span>; o selo <span class="over-tag">+1h</span> mostra o que passou do limite diário.</p>
       <div id="calError" class="error" hidden></div>
       <div id="calBody"></div>
     </section>
 
-    <section class="panel">
+    <section class="panel" id="hoursPanel">
       <h1>1. Horas por tarefa</h1>
       <p class="help">Marque as tarefas e informe as horas (ex.: <code>1h 30m</code>, <code>1,5</code>, <code>90m</code>). Em “Dividir total”, informe o total do épico e o percentual de Análise.</p>
       <p id="execNote" class="help reminder"></p>
       <div id="epics"><p class="muted">Carregando…</p></div>
       <div class="epic-block" id="looseBlock">
-        <div class="ep-row"><strong>Outras tarefas</strong><span class="muted">qualquer tarefa do Jira (exceto épicos); ★ guarda nos favoritos</span></div>
+        <div class="ep-row"><strong>Outras tarefas</strong><span class="muted">qualquer tarefa do Jira (exceto épicos); a estrela guarda nos favoritos</span></div>
         <div class="actions">
           <input id="looseKey" class="short" placeholder="ex.: SIJUD-123" aria-label="Chave da tarefa">
           <button id="looseAdd">Adicionar</button>
@@ -79,7 +82,7 @@
       </div>
     </section>
 
-    <section class="panel">
+    <section class="panel" id="periodPanel">
       <h1>2. Período e expediente</h1>
       <div class="grid-fields">
         <label>De<input type="date" id="from"></label>

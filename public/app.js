@@ -116,7 +116,7 @@ function addQueryRow(k = '', v = '') {
   const row = el('div', { class: 'qrow' },
     el('input', { class: 'mono qk', value: k, placeholder: 'parâmetro' }),
     el('input', { class: 'mono qv', value: v, placeholder: 'valor' }),
-    el('button', { type: 'button', title: 'Remover', onclick: () => row.remove() }, '×'),
+    el('button', { type: 'button', title: 'Remover', 'aria-label': 'Remover parâmetro', class: 'icon ghost', onclick: () => row.remove() }, el('span', { class: 'i i-x', 'aria-hidden': 'true' })),
   );
   $('queryRows').append(row);
 }
@@ -334,7 +334,7 @@ function bindUi() {
   $('btnCsv').addEventListener('click', exportCsv);
   $('connName').addEventListener('change', () => renderQlik());
   $('btnCopy').addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText($('qlik').textContent); $('btnCopy').textContent = 'Copiado!'; } catch { $('btnCopy').textContent = 'Selecione e copie'; }
+    try { await navigator.clipboard.writeText($('qlik').textContent); $('btnCopy').textContent = 'Copiado'; } catch { $('btnCopy').textContent = 'Selecione e copie'; }
     setTimeout(() => { $('btnCopy').textContent = 'Copiar'; }, 1500);
   });
   document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));

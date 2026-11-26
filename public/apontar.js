@@ -351,14 +351,14 @@ function looseMsg(text, bad = false) {
 function renderLoose() {
   const box = $('looseList');
   if (!state.loose.length) {
-    box.replaceChildren(el('p', { class: 'muted' }, 'Nenhuma tarefa avulsa. Informe a chave acima; marque ★ para guardar nos favoritos.'));
+    box.replaceChildren(el('p', { class: 'muted' }, 'Nenhuma tarefa avulsa. Informe a chave acima; marque a estrela para guardar nos favoritos.'));
     return;
   }
   box.replaceChildren(...state.loose.map((t) => {
     const c = hoursControls(state.looseUi, t.key);
-    const star = el('button', { class: 'icon', title: t.favorite ? 'Tirar dos favoritos' : 'Guardar nos favoritos', 'aria-pressed': String(Boolean(t.favorite)) }, t.favorite ? '★' : '☆');
+    const star = el('button', { class: 'icon', title: t.favorite ? 'Tirar dos favoritos' : 'Guardar nos favoritos', 'aria-pressed': String(Boolean(t.favorite)) }, el('span', { class: t.favorite ? 'i i-star-fill' : 'i i-star', 'aria-hidden': 'true' }));
     star.addEventListener('click', () => toggleFavorite(t));
-    const remove = el('button', { class: 'icon', title: 'Tirar da lista (não mexe nos favoritos)' }, '✕');
+    const remove = el('button', { class: 'icon', title: 'Tirar da lista (não mexe nos favoritos)', 'aria-label': 'Tirar da lista' }, el('span', { class: 'i i-x', 'aria-hidden': 'true' }));
     remove.addEventListener('click', () => { state.loose = state.loose.filter((x) => x !== t); delete state.looseUi.checked[t.key]; renderLoose(); });
     if (!t.available) c.check.disabled = true;
     return el('div', { class: `task-row${t.available ? '' : ' unavailable'}` },
@@ -426,31 +426,46 @@ const todayLocal = () => { const d = new Date(); return `${d.getFullYear()}-${St
 const fmtShort = (date) => date.split('-').reverse().join('/');
 const hours = (min) => (min ? formatDuration(min) : '0h');
 
-// Faixa de indicadores do período exibido no calendário.
+// Indicadores do período exibido no calendário: horas executadas em destaque, régua com um
+// traço por dia útil (altura = horas do dia, tracejado = limite diário) e os números do período.
 function renderKpis() {
   if (!lastShown) return;
   const dailyLimit = parseDuration($('dailyLimit').value) ?? DEFAULT_SCHEDULE.dailyLimit;
-  const k = periodIndicators({ ...lastShown, today: todayLocal(), dailyLimit });
-  const card = (label, value, cls = '', title = '') => {
-    const div = document.createElement('div');
-    div.className = `kpi ${cls}`.trim();
-    if (title) div.title = title;
-    const v = document.createElement('strong');
-    v.textContent = value;
-    const l = document.createElement('span');
-    l.textContent = label;
-    div.append(v, l);
-    return div;
-  };
-  const balance = k.balanceMin > 0 ? `faltam ${hours(k.balanceMin)}` : k.balanceMin < 0 ? `excedeu ${hours(-k.balanceMin)}` : 'na meta';
+  const today = todayLocal();
+  const k = periodIndicators({ ...lastShown, today, dailyLimit });
+  const card = (label, value, cls = '', title = '') => el('div', { class: `kpi ${cls}`.trim(), title }, el('strong', {}, value), el('span', {}, label));
+  const balance = k.balanceMin > 0 ? `Faltam ${hours(k.balanceMin)} para a meta` : k.balanceMin < 0 ? `${hours(-k.balanceMin)} acima da meta` : 'Na meta';
+  const balanceCls = k.balanceMin > 0 ? 'under' : k.balanceMin < 0 ? 'over' : 'ok';
   $('kpiPeriod').textContent = lastShown.from === lastShown.to ? fmtShort(lastShown.from) : `${fmtShort(lastShown.from)} a ${fmtShort(lastShown.to)}`;
+
+  const perDay = new Map();
+  for (const e of lastShown.entries ?? []) perDay.set(e.date, (perDay.get(e.date) ?? 0) + (e.minutes || 0));
+  const days = businessDays(lastShown.from, lastShown.to, lastShown.holidays ?? new Set());
+  const top = Math.max(dailyLimit * 1.25, ...days.map((d) => perDay.get(d) ?? 0)) || 1;
+  const ticks = days.map((d) => {
+    const m = perDay.get(d) ?? 0;
+    const future = d > today && !m;
+    const cls = ['tick', future ? 'future' : !m ? 'zero' : '', m > dailyLimit ? 'over' : '', d === today ? 'today' : ''].filter(Boolean).join(' ');
+    const pct = future ? dailyLimit / top * 100 : m / top * 100;
+    return el('span', { class: cls, style: `height:${pct.toFixed(1)}%`, title: `${fmtShort(d)} · ${future ? 'a trabalhar' : hours(m)}` });
+  });
+  const ruler = days.length > 1 ? el('div', { class: 'ruler' },
+    el('div', { class: 'ruler-bars' }, el('span', { class: 'ruler-goal', style: `bottom:${(dailyLimit / top * 100).toFixed(1)}%` }), ...ticks),
+    el('div', { class: 'ruler-days' }, ...days.map((d) => el('span', {}, Number(d.slice(8))))),
+    el('span', { class: 'ruler-note' }, `Um traço por dia útil · tracejado = limite de ${hours(dailyLimit)}`)) : null;
+
   $('kpis').replaceChildren(
-    card('Dias úteis no período', String(k.businessDays)),
-    card('Dias trabalhados', String(k.worked), '', 'Dias úteis com pelo menos uma batida'),
-    card('Dias a trabalhar', String(k.toWork), '', 'Dias úteis de hoje até o fim do período ainda sem batida'),
-    card('Horas previstas', hours(k.expectedMin), '', `${k.businessDays} dias × ${hours(dailyLimit)}`),
-    card('Horas executadas', hours(k.executedMin)),
-    card('Saldo', balance, k.balanceMin > 0 ? 'under' : k.balanceMin < 0 ? 'over' : 'ok', 'Previstas − executadas'),
+    el('div', { class: 'saldo' },
+      el('div', { class: 'saldo-main' },
+        el('span', { class: 'muted' }, 'Horas executadas'),
+        el('div', { class: 'saldo-fig' }, el('strong', {}, hours(k.executedMin)), el('span', {}, `de ${hours(k.expectedMin)}`)),
+        el('span', { class: `saldo-bal ${balanceCls}`, title: 'Previstas − executadas' }, balance)),
+      ruler),
+    el('div', { class: 'kpi-stats' },
+      card('Dias úteis no período', String(k.businessDays)),
+      card('Dias trabalhados', String(k.worked), '', 'Dias úteis com pelo menos uma batida'),
+      card('Dias a trabalhar', String(k.toWork), '', 'Dias úteis de hoje até o fim do período ainda sem batida'),
+      card('Horas previstas', hours(k.expectedMin), '', `${k.businessDays} dias × ${hours(dailyLimit)}`)),
   );
 }
 

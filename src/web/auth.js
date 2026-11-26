@@ -9,7 +9,8 @@ const GENERIC_LOGIN_ERROR = 'E-mail ou senha inválidos.';
 
 const PUBLIC_PATHS = new Set(['/login.html', '/login.js', '/convite.html', '/convite.js', '/style.css']);
 const PUBLIC_EXACT = new Set(['/api/login']);
-const PUBLIC_PREFIXES = ['/api/convite/', '/api/redefinir/'];
+// Fontes do visual (Geist, OFL): a tela de login usa sem sessão.
+const PUBLIC_PREFIXES = ['/api/convite/', '/api/redefinir/', '/fonts/'];
 const REFRESH_AFTER_MS = 24 * 3600 * 1000;
 // Segundo limite de login, só por IP (contra tentativas espalhadas por vários e-mails).
 const IP_LOGIN_MAX = 30;
@@ -17,7 +18,15 @@ const IP_LOGIN_WINDOW_MS = 15 * 60 * 1000;
 // Calculado uma vez: o scrypt do e-mail desconhecido tem o mesmo custo do de um usuário real.
 const DUMMY_HASH = await hashPassword('dummy-password-for-timing');
 
-const isPublic = (path) => PUBLIC_PATHS.has(path) || PUBLIC_EXACT.has(path) || PUBLIC_PREFIXES.some((p) => path.startsWith(p));
+// Segmento ".." (também codificado: %2e%2e, ..%2f): o servidor de arquivos normaliza o caminho e
+// "/fonts/../apontar.html" viraria uma página protegida. Prefixo público só vale sem isso.
+const hasDotSegment = (path) => {
+  let p = path;
+  try { p = decodeURIComponent(path); } catch { return true; }
+  return p.split(/[/\\]/).some((seg) => seg === '..' || seg === '.');
+};
+const isPublic = (path) => PUBLIC_PATHS.has(path) || PUBLIC_EXACT.has(path)
+  || (PUBLIC_PREFIXES.some((p) => path.startsWith(p)) && !hasDotSegment(path));
 
 function parseCookies(header) {
   const out = {};
