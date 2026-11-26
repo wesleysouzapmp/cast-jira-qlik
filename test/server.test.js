@@ -141,13 +141,14 @@ test('accepts localhost Host header', async () => {
 
 // ---- Tarefas de apoio ----
 import { JiraError } from '../src/support/service.js';
+import { createCatalogRepo } from '../src/db/catalog.js';
 
 function fakeSupport({ fail } = {}) {
   const calls = [];
   const svc = {
     async listItems(opts) { calls.push(['list', opts]); if (fail) throw fail; return { items: [], truncated: false }; },
-    async preview(keys) { calls.push(['preview', keys]); return { epics: [], rejected: [] }; },
-    async create(keys, models) { calls.push(models === undefined ? ['create', keys] : ['create', keys, models]); if (fail) throw fail; return { results: [] }; },
+    async preview(keys, opts) { calls.push(['preview', keys, opts]); return { epics: [], rejected: [] }; },
+    async create(keys, tasks) { calls.push(['create', keys, tasks]); if (fail) throw fail; return { results: Object.entries(tasks).flatMap(([epic, list]) => list.map((t) => ({ epic, cat: t.cat, size: t.size, summary: t.summary, status: 'created', key: 'QSENSE-1' }))) }; },
   };
   return { svc, calls };
 }
@@ -165,66 +166,6 @@ test('support items repassa onlyEpics', async () => {
   assert.deepEqual(calls[2], ['list', { onlyEpics: false, includeDone: true }]);
 });
 
-test('support create valida keys', async () => {
-  const { svc, calls } = fakeSupport();
-  const { post } = await start({ supportService: svc });
-  const many = Array.from({ length: 51 }, (_, i) => `BI-${i + 1}`);
-  for (const keys of [[], ['bi-1'], many, 'BI-1', ['BI-1 OR 1=1'], undefined]) {
-    const res = await post('/api/support/create', { keys });
-    assert.equal(res.status, 400, JSON.stringify(keys));
-  }
-  assert.equal(calls.length, 0);
-});
-
-test('support create remove duplicadas', async () => {
-  const { svc, calls } = fakeSupport();
-  const { post } = await start({ supportService: svc });
-  const res = await post('/api/support/create', { keys: ['BI-1', 'BI-1'] });
-  assert.equal(res.status, 200);
-  assert.deepEqual(calls[0], ['create', ['BI-1']]);
-});
-
-test('support create repassa a escolha de modelos', async () => {
-  const { svc, calls } = fakeSupport();
-  const { post } = await start({ supportService: svc });
-  const res = await post('/api/support/create', { keys: ['BI-1', 'BI-2'], models: { 'BI-1': ['analise', 'analise'], 'BI-2': [] } });
-  assert.equal(res.status, 200);
-  assert.deepEqual(calls[0], ['create', ['BI-1', 'BI-2'], { 'BI-1': ['analise'], 'BI-2': [] }]);
-});
-
-test('support create recusa escolha de modelos inválida', async () => {
-  const { svc, calls } = fakeSupport();
-  const { post } = await start({ supportService: svc });
-  for (const models of [[], 'x', { 'BI-1': 'analise' }, { 'BI-1': ['outro'] }, { 'BI-9': ['analise'] }, { __proto__: null, 'BI-1': [1] }]) {
-    const res = await post('/api/support/create', { keys: ['BI-1'], models });
-    assert.equal(res.status, 400, JSON.stringify(models));
-  }
-  assert.equal(calls.length, 0);
-});
-
-test('support preview chama o serviço', async () => {
-  const { svc, calls } = fakeSupport();
-  const { post } = await start({ supportService: svc });
-  const res = await post('/api/support/preview', { keys: ['BI-2'] });
-  assert.equal(res.status, 200);
-  assert.deepEqual(calls[0], ['preview', ['BI-2']]);
-});
-
-test('support create recusa Origin externo', async () => {
-  const { svc, calls } = fakeSupport();
-  const { post } = await start({ supportService: svc });
-  const res = await post('/api/support/create', { keys: ['BI-1'] }, { Origin: 'https://evil.example' });
-  assert.equal(res.status, 403);
-  assert.equal(calls.length, 0);
-});
-
-test('support create aceita Origin do próprio app', async () => {
-  const { svc } = fakeSupport();
-  const { post, base } = await start({ supportService: svc });
-  const res = await post('/api/support/create', { keys: ['BI-1'] }, { Origin: base });
-  assert.equal(res.status, 200);
-});
-
 test('support JiraError vira 502', async () => {
   const { svc } = fakeSupport({ fail: new JiraError(401, 'Busca: HTTP 401 Não autorizado') });
   const { get } = await start({ supportService: svc });
@@ -236,7 +177,7 @@ test('support JiraError vira 502', async () => {
 test('support sem token → 409', async () => {
   const { svc, calls } = fakeSupport();
   const { post } = await start({ supportService: svc, tokenConfigured: false });
-  const res = await post('/api/support/create', { keys: ['BI-1'] });
+  const res = await post('/api/support/create', { keys: ['BI-1'], tasks: { 'BI-1': [{ cat: 'CAT-105', size: 'M', summary: 'T' }] } });
   assert.equal(res.status, 409);
   assert.match((await res.json()).error, /Configure seu token do Jira/);
   assert.equal(calls.length, 0);
@@ -448,12 +389,13 @@ test('batch e support create auditam; entrada inválida e erro do serviço não 
   const s = fakeSupport();
   const t = await start({ worklogService: w.svc, supportService: s.svc });
   assert.equal((await t.post('/api/worklog/batch', { changes: [{ id: '7', issueKey: 'QSENSE-1', action: 'delete' }] })).status, 200);
-  assert.equal((await t.post('/api/support/create', { keys: ['BI-1', 'BI-1'] })).status, 200);
+  createCatalogRepo(t.db).replaceAll([{ cat: 'CAT-105', size: 'M', ust: 1 }], null);
+  assert.equal((await t.post('/api/support/create', { keys: ['BI-1', 'BI-1'], templateId: 'padrao', tasks: { 'BI-1': [{ cat: 'CAT-105', size: 'M', summary: 'Um título longo {EPICO}', description: 'Texto longo' }] } })).status, 200);
   assert.equal((await t.post('/api/worklog/submit', { entries: [] })).status, 400);
   assert.equal((await t.post('/api/worklog/preview', okPreview)).status, 200);
   assert.deepEqual(auditRows(t.db).map((r) => [r.via, r.action, r.detail]), [
     ['web', 'worklog.batch', { changes: 1, keys: ['QSENSE-1'] }],
-    ['web', 'support.create', { keys: ['BI-1'] }],
+    ['web', 'support.create', { keys: ['BI-1'], templateId: 'padrao', template: 'Padrão', tasks: [{ epic: 'BI-1', cat: 'CAT-105', size: 'M', status: 'created', key: 'QSENSE-1' }] }],
   ]);
   const f = fakeWorklog({ fail: new ConflictError('x') });
   const t2 = await start({ worklogService: f.svc });

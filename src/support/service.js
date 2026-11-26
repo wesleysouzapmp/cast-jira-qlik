@@ -1,7 +1,10 @@
-// Serviço das "Tarefas de apoio": lista itens atribuídos, detecta tarefas já criadas
-// no QSENSE e cria as que faltam. Toda chamada passa pelo client.call do jiraClient.
+// Serviço das "Tarefas de apoio": lista itens atribuídos, reconhece as tarefas de apoio já
+// criadas no QSENSE (pelo código CAT do Item do Catálogo) e cria as tarefas escolhidas na prévia
+// (vindas de um modelo ou avulsas). Toda chamada passa pelo client.call do jiraClient.
 import { MODELS, QSENSE } from './models.js';
-import { renderModel, buildCreateBody, modelOfTask } from './render.js';
+import { renderModel, buildCreateBody, supportTaskInfo, epicLabel } from './render.js';
+import { optionText, sizeFieldIn, pickOption, pickCatOption } from './jiraFields.js';
+import { normSize } from '../shared/ustCatalog.js';
 
 const LIST_JQL_OPEN = 'assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC';
 const LIST_JQL_ALL = 'assignee = currentUser() ORDER BY updated DESC';
@@ -9,6 +12,9 @@ const LIST_FIELDS = ['summary', 'issuetype', 'status', 'project'];
 const PAGE_SIZE = 100;
 const MAX_PAGES = 10;
 const BATCH = 50;
+const META_PATH = `/rest/api/3/issue/createmeta/${QSENSE.projectKey}/issuetypes/${QSENSE.issueTypeId}`;
+const WHERE_CREATE = 'na criação de tarefas de apoio do QSENSE';
+const SIZE_MISS_TTL_MS = 10 * 60 * 1000; // "Tamanho" não achado: tenta de novo depois de 10 min
 
 export class JiraError extends Error {
   constructor(status, message) {
@@ -29,11 +35,18 @@ function chunk(arr, n) {
   return out;
 }
 
-export function createSupportService({ client, baseUrl }) {
+// Ordem das tarefas de um épico: Análise, Implementação e depois as demais por chave.
+const keyNum = (k) => Number(k.split('-').pop());
+const modelRank = (m) => { const i = MODELS.findIndex((x) => x.id === m); return i < 0 ? MODELS.length : i; };
+export const byTaskOrder = (a, b) => modelRank(a.model) - modelRank(b.model) || keyNum(a.key) - keyNum(b.key) || a.key.localeCompare(b.key);
+
+export function createSupportService({ client, baseUrl, now = () => Date.now() }) {
   const browse = (key) => `${baseUrl}/browse/${key}`;
   let accountId = null;
-  // Tarefas criadas por este processo: épico → { modelo: [{ key, id }] }. Cobre o atraso do
-  // índice de busca do Jira, que pode ainda não mostrar uma issue recém-criada.
+  let sizeField; // { id, name } depois de achado em /rest/api/3/field
+  let sizeMissUntil = 0; // até quando vale o "não achado" (cache negativo)
+  // Tarefas criadas por este processo: épico → [{ key, id, info }]. Cobre o atraso do índice de
+  // busca do Jira, que pode ainda não mostrar uma issue recém-criada.
   const created = new Map();
   // Fila única: dois pedidos de criação nunca rodam ao mesmo tempo.
   let queue = Promise.resolve();
@@ -45,54 +58,69 @@ export function createSupportService({ client, baseUrl }) {
   }
 
   const isEpic = (issue) => issue.fields?.issuetype?.hierarchyLevel === 1;
-  const keyNum = (k) => Number(k.split('-').pop());
-  const byKey = (a, b) => keyNum(a) - keyNum(b) || a.localeCompare(b);
-  function add(map, epicKey, modelId, taskKey) {
-    const entry = map.get(epicKey) ?? {};
-    const list = (entry[modelId] ??= []);
-    if (!list.includes(taskKey)) list.push(taskKey);
-    map.set(epicKey, entry);
+
+  // Campo Tamanho (tamanho das tarefas existentes e gravação depois da criação): falha na leitura ou
+  // campo ausente = sem tamanho, e a resposta negativa fica guardada por 10 minutos.
+  async function findSizeField() {
+    if (sizeField) return sizeField;
+    if (now() < sizeMissUntil) return null;
+    const res = await client.call({ method: 'GET', path: '/rest/api/3/field' });
+    if (res.ok) sizeField = sizeFieldIn(res.data) ?? undefined;
+    if (!sizeField) sizeMissUntil = now() + SIZE_MISS_TTL_MS;
+    return sizeField ?? null;
+  }
+
+  // Tamanho gravado depois da criação (o campo não está na tela de criação): editmeta + PUT, com as
+  // mesmas regras de opção da tela Tamanhos. Devolve null se gravou, senão o motivo.
+  async function setSizeAfter(key, size) {
+    const field = await findSizeField();
+    if (!field) return 'campo "Tamanho" não encontrado no Jira.';
+    const meta = await client.call({ method: 'GET', path: `/rest/api/3/issue/${key}/editmeta` });
+    if (!meta.ok) return `HTTP ${meta.status} ${jiraMessage(meta.data)}`.trim();
+    const allowed = meta.data?.fields?.[field.id]?.allowedValues;
+    if (!allowed) return `o campo ${field.name} não pode ser editado nesta tarefa (permissão ou status).`;
+    const { opt, error } = pickOption(allowed, size);
+    if (!opt) return error;
+    const res = await client.call({ method: 'PUT', path: `/rest/api/3/issue/${key}`, body: { fields: { [field.id]: { id: String(opt.id) } } } });
+    return res.ok ? null : `HTTP ${res.status} ${jiraMessage(res.data)}`.trim();
   }
 
   // Pede ao Jira consistência de leitura para as issues que este processo criou.
   function reconcile(epicKeys) {
-    const ids = epicKeys.flatMap((k) => Object.values(created.get(k) ?? {}).flat().map((t) => Number(t.id))).filter(Number.isFinite);
+    const ids = epicKeys.flatMap((k) => (created.get(k) ?? []).map((t) => Number(t.id))).filter(Number.isFinite);
     return ids.length ? { reconcileIssues: ids } : {};
   }
 
-  // Mapa épico → { modelo: [chaves das tarefas, em ordem] }; map.info: chave da tarefa → { status, summary }.
-  // Um épico pode ter várias tarefas do mesmo modelo.
+  // Mapa épico → [{ key, url, cat, catLabel, model, size?, status, summary }] em ordem.
   async function findExisting(epicKeys) {
     const map = new Map();
-    const info = new Map();
+    const put = (epicKey, t) => {
+      const list = map.get(epicKey) ?? [];
+      if (!list.some((x) => x.key === t.key)) list.push(t);
+      map.set(epicKey, list);
+    };
+    const size = epicKeys.length ? await findSizeField() : null;
     for (const keys of chunk(epicKeys, BATCH)) {
       let nextPageToken;
       do {
         const data = await call({
           method: 'POST',
           path: '/rest/api/3/search/jql',
-          body: { jql: `project = ${QSENSE.projectKey} AND parent in (${keys.join(', ')})`, maxResults: PAGE_SIZE, fields: ['summary', 'status', 'parent', QSENSE.catalogFieldId], ...reconcile(keys), ...(nextPageToken ? { nextPageToken } : {}) },
+          body: { jql: `project = ${QSENSE.projectKey} AND parent in (${keys.join(', ')})`, maxResults: PAGE_SIZE, fields: ['summary', 'status', 'parent', QSENSE.catalogFieldId, ...(size ? [size.id] : [])], ...reconcile(keys), ...(nextPageToken ? { nextPageToken } : {}) },
         }, 'Busca de tarefas existentes');
         for (const t of data.issues ?? []) {
           const parent = t.fields?.parent?.key;
-          const model = modelOfTask(t);
-          if (!parent || !model) continue;
-          add(map, parent, model.id, t.key);
-          info.set(t.key, { status: t.fields?.status?.name ?? '', summary: t.fields?.summary ?? '' });
+          const info = supportTaskInfo(t);
+          if (!parent || !info) continue;
+          const sz = size ? normSize(optionText(t.fields?.[size.id])) : null;
+          put(parent, { key: t.key, url: browse(t.key), ...info, ...(sz ? { size: sz } : {}), status: t.fields?.status?.name ?? '', summary: t.fields?.summary ?? '' });
         }
         nextPageToken = data.isLast === true ? undefined : data.nextPageToken;
       } while (nextPageToken);
     }
-    for (const key of epicKeys) {
-      for (const [modelId, list] of Object.entries(created.get(key) ?? {})) {
-        for (const t of list) {
-          add(map, key, modelId, t.key);
-          if (!info.has(t.key)) info.set(t.key, { status: 'Aberto', summary: '' });
-        }
-      }
-    }
-    for (const entry of map.values()) for (const list of Object.values(entry)) list.sort(byKey);
-    return Object.assign(map, { info });
+    for (const key of epicKeys) for (const t of created.get(key) ?? []) put(key, { key: t.key, url: browse(t.key), ...t.info });
+    for (const list of map.values()) list.sort(byTaskOrder);
+    return map;
   }
 
   async function listItems({ onlyEpics = false, includeDone = false } = {}) {
@@ -120,14 +148,13 @@ export function createSupportService({ client, baseUrl }) {
       status: i.fields?.status?.name ?? '',
       project: i.fields?.project?.key ?? '',
       url: browse(i.key),
-      existing: MODELS.flatMap((m) => (existing.get(i.key)?.[m.id] ?? []).map((key) => (
-        { model: m.id, key, url: browse(key), ...existing.info.get(key) }))),
+      existing: existing.get(i.key) ?? [],
     }));
     return { items, truncated };
   }
 
   // Busca de novo os itens pedidos; não confia em nada vindo do navegador.
-  async function resolve(keys) {
+  async function resolve(keys, { withExisting = true } = {}) {
     const found = new Map();
     for (const part of chunk(keys, BATCH)) {
       const data = await call({ method: 'POST', path: '/rest/api/3/issue/bulkfetch', body: { issueIdsOrKeys: part, fields: LIST_FIELDS } }, 'Busca dos épicos');
@@ -141,22 +168,26 @@ export function createSupportService({ client, baseUrl }) {
       else if (!isEpic(issue)) rejected.push({ key, reason: 'Só épicos recebem tarefas de apoio.' });
       else epics.push(issue);
     }
-    const existing = await findExisting(epics.map((e) => e.key));
+    const existing = withExisting ? await findExisting(epics.map((e) => e.key)) : new Map();
     return { epics, rejected, existing };
   }
 
-  async function preview(keys) {
+  // items: tarefas do modelo (valem para todos os épicos); tasks: { épico: [tarefas] } substitui
+  // as do modelo naquele épico. Tarefa cujo CAT o épico já tem vem desmarcada.
+  async function preview(keys, { items = [], tasks = {} } = {}) {
     const { epics, rejected, existing } = await resolve(keys);
     return {
       epics: epics.map((e) => {
-        const have = existing.get(e.key) ?? {};
-        // Todos os modelos aparecem; vêm marcados só os que o épico ainda não tem.
+        const have = existing.get(e.key) ?? [];
+        const list = Object.hasOwn(tasks, e.key) ? tasks[e.key] : items;
         return {
           epic: e.key,
           summary: e.fields.summary,
-          models: MODELS.map((m) => {
-            const keys = have[m.id] ?? [];
-            return { model: m.id, ...renderModel(m, e), catalog: m.catalog.label, existing: keys, checked: keys.length === 0 };
+          label: epicLabel(e),
+          existing: have,
+          tasks: list.map((t) => {
+            const same = have.filter((x) => x.cat === t.cat).map((x) => x.key);
+            return { cat: t.cat, size: t.size, ...renderModel({ summary: t.summary, description: t.description ?? '' }, e), existing: same, checked: same.length === 0 };
           }),
         };
       }),
@@ -169,38 +200,75 @@ export function createSupportService({ client, baseUrl }) {
     return accountId;
   }
 
-  // models (opcional): { épico: [modelos] } escolhidos na prévia; cria esses mesmo que já existam.
-  // Sem escolha para um épico, cria só os modelos que ele ainda não tem.
-  function create(keys, models) {
-    const run = queue.then(() => createNow(keys, models));
+  // Campos da criação de "Tarefa de apoio" no QSENSE (paginado; a lista vem em fields ou values).
+  async function createMeta() {
+    const out = [];
+    let startAt = 0;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const data = await call({ method: 'GET', path: META_PATH, query: { startAt, maxResults: PAGE_SIZE } }, 'Campos de criação da tarefa de apoio');
+      const list = data?.fields ?? data?.values ?? [];
+      out.push(...list);
+      startAt += list.length;
+      if (!list.length || data.isLast === true) break;
+      if (Number.isFinite(data.total) ? startAt >= data.total : list.length < (data.maxResults ?? PAGE_SIZE)) break;
+    }
+    return out.map((f) => ({ ...f, id: String(f.fieldId ?? f.key ?? f.id ?? '') }));
+  }
+
+  // tasks: { épico: [{ cat, size, summary, description }] } já validadas (CAT/tamanho no catálogo).
+  // Cria todas as tarefas listadas, uma por vez; erro numa não impede as outras.
+  function create(keys, tasks) {
+    const run = queue.then(() => createNow(keys, tasks));
     queue = run.catch(() => {});
     return run;
   }
 
-  async function createNow(keys, models = {}) {
-    const { epics, rejected, existing } = await resolve(keys);
-    const results = rejected.map((r) => ({ epic: r.key, model: null, status: 'error', error: r.reason }));
-    if (!epics.length) return { results };
-    let acc;
-    for (const e of epics) {
-      const have = existing.get(e.key) ?? {};
-      const picked = Object.hasOwn(models, e.key) ? models[e.key] : null;
-      for (const m of MODELS) {
-        if (picked ? !picked.includes(m.id) : false) continue;
-        if (!picked && have[m.id]?.length) { const k = have[m.id][0]; results.push({ epic: e.key, model: m.id, status: 'skipped', key: k, url: browse(k) }); continue; }
-        acc ??= await myAccountId();
-        const res = await client.call({ method: 'POST', path: '/rest/api/3/issue', body: buildCreateBody(m, e, acc) });
-        if (res.ok && res.data?.key) {
-          const mine = created.get(e.key) ?? {};
-          created.set(e.key, { ...mine, [m.id]: [...(mine[m.id] ?? []), { key: res.data.key, id: res.data.id }] });
-          results.push({ epic: e.key, model: m.id, status: 'created', key: res.data.key, url: browse(res.data.key) });
-        } else results.push({ epic: e.key, model: m.id, status: 'error', error: res.status === 0
-          ? `${jiraMessage(res.data)} — o Jira pode ter criado a tarefa mesmo assim; confira o épico antes de repetir.`
-          : `HTTP ${res.status} ${jiraMessage(res.data)}`.trim() });
+  async function createNow(keys, tasks = {}) {
+    const { epics, rejected } = await resolve(keys, { withExisting: false });
+    const results = rejected.map((r) => ({ epic: r.key, cat: null, status: 'error', error: r.reason }));
+    const todo = epics.flatMap((e) => (tasks[e.key] ?? []).map((t) => ({ e, t })));
+    if (!todo.length) return { results };
+    const meta = await createMeta();
+    const catField = meta.find((f) => f.id === QSENSE.catalogFieldId);
+    const size = sizeFieldIn(meta);
+    const sizeAllowed = size ? meta.find((f) => f.id === size.id)?.allowedValues : null;
+    const acc = await myAccountId();
+    for (const { e, t } of todo) {
+      const base = { epic: e.key, cat: t.cat, size: t.size, summary: renderModel(t, e).summary };
+      const fail = (error) => results.push({ ...base, status: 'error', error });
+      if (!catField?.allowedValues) { fail(`O Item do Catálogo não aparece ${WHERE_CREATE}; ajuste no Jira.`); continue; }
+      const c = pickCatOption(catField.allowedValues, t.cat, WHERE_CREATE);
+      if (!c.value) { fail(c.error); continue; }
+      // Tamanho na tela de criação: vai no próprio pedido. Fora dela: grava depois (editmeta + PUT).
+      const options = { [QSENSE.catalogFieldId]: c.value };
+      if (sizeAllowed) {
+        const s = pickOption(sizeAllowed, t.size, WHERE_CREATE);
+        if (!s.opt) { fail(s.error); continue; }
+        options[size.id] = { id: String(s.opt.id) };
       }
+      const body = buildCreateBody(t, e, acc, options);
+      const res = await client.call({ method: 'POST', path: '/rest/api/3/issue', body });
+      if (res.ok && res.data?.key) {
+        let warning;
+        if (!sizeAllowed) {
+          const why = await setSizeAfter(res.data.key, t.size).catch((err) => err.message);
+          if (why) warning = `criada sem Tamanho: ${why}`;
+        }
+        const childText = childValue(catField.allowedValues, c.value.child.id);
+        const info = supportTaskInfo({ fields: { summary: body.fields.summary, [QSENSE.catalogFieldId]: { id: c.value.id, child: { id: c.value.child.id, value: childText } } } });
+        created.set(e.key, [...(created.get(e.key) ?? []), { key: res.data.key, id: res.data.id, info: { ...info, ...(warning ? {} : { size: t.size }), status: 'Aberto', summary: body.fields.summary } }]);
+        results.push({ ...base, status: 'created', key: res.data.key, url: browse(res.data.key), ...(warning ? { warning } : {}) });
+      } else fail(res.status === 0
+        ? `${jiraMessage(res.data)} — o Jira pode ter criado a tarefa mesmo assim; confira o épico antes de repetir.`
+        : `HTTP ${res.status} ${jiraMessage(res.data)}`.trim());
     }
     return { results };
   }
 
   return { listItems, preview, create };
+}
+
+function childValue(allowed, childId) {
+  for (const p of allowed ?? []) for (const c of p.children ?? []) if (String(c.id) === String(childId)) return String(c.value ?? c.name ?? '');
+  return '';
 }

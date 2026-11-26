@@ -48,7 +48,7 @@ let tasks = [];
 async function loadTasks() {
   try {
     const r = await api('/api/worklog/tasks');
-    tasks = r.epics.flatMap((e) => e.tasks.map((t) => ({ key: t.key, model: t.model, epicKey: e.key })));
+    tasks = r.epics.flatMap((e) => e.tasks.map((t) => ({ key: t.key, model: t.model, label: t.label, epicKey: e.key })));
   } catch { tasks = []; }
 }
 

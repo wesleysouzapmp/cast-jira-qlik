@@ -3,7 +3,8 @@ import { fileURLToPath } from 'node:url';
 import { CATALOG, getEndpoint, buildPath, isAllowed } from './catalog.js';
 import { paginate } from './paginators.js';
 import { JiraError } from './support/service.js';
-import { MODELS as SUPPORT_MODEL_LIST } from './support/models.js';
+import { validateTemplate, validateTask } from './support/templates.js';
+import { createTemplateRepo, SYSTEM_TEMPLATE_ID } from './db/templates.js';
 import { ConflictError, ScopeError } from './worklog/service.js';
 import { AiError } from './worklog/ai.js';
 import { registerAuth } from './web/auth.js';
@@ -65,22 +66,37 @@ function parseKeys(keys) {
   return [...new Set(keys)];
 }
 
-// Escolha de modelos da prévia: { 'BI-1': ['analise', ...] }, só para chaves pedidas.
-const SUPPORT_MODELS = new Set(SUPPORT_MODEL_LIST.map((m) => m.id));
-function parseModels(models, keys) {
-  if (models === undefined) return undefined;
-  if (!models || typeof models !== 'object' || Array.isArray(models)) throw new BadRequest('Escolha de modelos inválida.');
+// Tarefas da prévia/criação por épico: { 'BI-1': [{ cat, size, summary, description }] }, só para
+// chaves pedidas; CAT e tamanho revalidados no catálogo de UST.
+const MAX_TASKS_PER_EPIC = 40;
+const MAX_TASKS = 200;
+function parseTasks(tasks, keys, catalogItems) {
+  if (!tasks || typeof tasks !== 'object' || Array.isArray(tasks)) throw new BadRequest('Lista de tarefas por épico inválida.');
   const out = {};
-  for (const [key, list] of Object.entries(models)) {
-    if (!keys.includes(key) || !Array.isArray(list) || !list.every((m) => typeof m === 'string' && SUPPORT_MODELS.has(m))) {
-      throw new BadRequest('Escolha de modelos inválida.');
+  let total = 0;
+  for (const [key, list] of Object.entries(tasks)) {
+    if (!keys.includes(key)) throw new BadRequest(`Tarefas para ${String(key).slice(0, 30)}, que não está entre os épicos escolhidos.`);
+    if (!Array.isArray(list) || list.length > MAX_TASKS_PER_EPIC) throw new BadRequest(`${key}: envie de 0 a ${MAX_TASKS_PER_EPIC} tarefas.`);
+    total += list.length;
+    if (total > MAX_TASKS) throw new BadRequest(`No máximo ${MAX_TASKS} tarefas por pedido.`);
+    try {
+      out[key] = list.map((t, n) => validateTask(t, catalogItems, `${key}, tarefa ${n + 1}`, { truncate: true }));
+    } catch (err) {
+      if (err instanceof RangeError) throw new BadRequest(err.message);
+      throw err;
     }
-    out[key] = [...new Set(list)];
   }
   return out;
 }
 
+function parseTemplateId(id) {
+  if (id === undefined || id === null) return null;
+  if (typeof id !== 'string' || !id || id.length > 64) throw new BadRequest('Modelo inválido.');
+  return id;
+}
+
 class NotFound extends Error {}
+class Forbidden extends Error {}
 class MissingToken extends Error {}
 const MISSING_TOKEN = 'Configure seu token do Jira em Minha conta.';
 
@@ -117,6 +133,7 @@ function makeGuard({ jira = true } = {}) {
       if (err instanceof MissingToken) return res.status(409).json({ error: err.message });
       if (err instanceof BadRequest) return res.status(400).json({ error: err.message });
       if (err instanceof NotFound) return res.status(404).json({ error: err.message });
+      if (err instanceof Forbidden) return res.status(403).json({ error: err.message });
       if (err instanceof ConflictError) return res.status(409).json({ error: err.message });
       if (err instanceof ScopeError) return res.status(400).json({ error: err.message });
       if (err instanceof JiraError || err instanceof AiError) return res.status(502).json({ error: err.message });
@@ -126,20 +143,101 @@ function makeGuard({ jira = true } = {}) {
   };
 }
 
-// Rotas das "Tarefas de apoio".
-function registerSupportRoutes(app, { audit }) {
+// Rotas das "Tarefas de apoio" e dos modelos de tarefas.
+// Modelos: criar/editar/excluir exige "pode criar" (admin ou chave ligada pelo admin) e ser o dono
+// ou o admin; o modelo do sistema (sem dono) só o admin. Privado de outra pessoa: 404.
+function registerSupportRoutes(app, { audit, catalog, templates, users }) {
   const handle = makeGuard();
+  const local = makeGuard({ jira: false });
+  const catalogItems = () => catalog?.get().items ?? [];
+  const isAdmin = (req) => req.user.role === 'admin';
+  const canCreate = (req) => isAdmin(req) || users.byId(req.user.id)?.canCreateTemplates === true;
+  const canEdit = (req, t) => canCreate(req) && (isAdmin(req) || (t.ownerId !== null && t.ownerId === req.user.id));
+  const view = (req, t) => ({
+    id: t.id, name: t.name, public: t.public, system: t.ownerId === null, ownerName: t.ownerName,
+    mine: t.ownerId === req.user.id, items: t.items, updatedAt: t.updatedAt, canEdit: canEdit(req, t),
+    usable: templates.isUsable(t, req.user),
+  });
+  const visibleTemplate = (req, id) => {
+    const t = templates?.get(id);
+    if (!t || !templates.isVisible(t, req.user)) throw new NotFound('Modelo não encontrado.');
+    return t;
+  };
+  // Modelo padrão da prévia: o último usado (se ainda utilizável), senão o "Padrão", senão o primeiro.
+  const defaultTemplate = (req) => {
+    if (!templates) return null;
+    const list = templates.listVisible(req.user).filter((t) => templates.isUsable(t, req.user));
+    const last = templates.lastUsed(req.user.id);
+    return list.find((t) => t.id === last) ?? list.find((t) => t.id === SYSTEM_TEMPLATE_ID) ?? list[0] ?? null;
+  };
+  const checked = (fn) => (...args) => {
+    try { return fn(...args); } catch (err) { if (err instanceof RangeError) throw new BadRequest(err.message); throw err; }
+  };
+  const auditTemplate = (req, action, t) => auditWeb(audit, req, action, { templateId: t.id, name: t.name, public: t.public, items: t.items.length });
+
   app.get('/api/support/items', handle((req, ctx) => {
     const opts = { onlyEpics: req.query.onlyEpics === '1' };
     if (req.query.includeDone === '1') opts.includeDone = true;
     return ctx.supportService.listItems(opts);
   }));
-  app.post('/api/support/preview', handle((req, ctx) => ctx.supportService.preview(parseKeys(req.body?.keys))));
+
+  if (templates) {
+    app.get('/api/support/templates', local((req) => ({
+      templates: templates.listVisible(req.user).map((t) => view(req, t)),
+      canEdit: canCreate(req),
+      lastUsedId: defaultTemplate(req)?.id ?? null,
+    })));
+    app.post('/api/support/templates', local(checked((req) => {
+      if (!canCreate(req)) throw new Forbidden('Peça ao administrador para habilitar a criação de modelos.');
+      const t = templates.create(validateTemplate(req.body, catalogItems()), req.user.id);
+      auditTemplate(req, 'support.template.create', t);
+      return { template: view(req, t) };
+    })));
+    app.put('/api/support/templates/:id', local(checked((req) => {
+      const t = visibleTemplate(req, String(req.params.id));
+      if (!canEdit(req, t)) throw new Forbidden('Só o dono do modelo ou o administrador pode alterá-lo.');
+      const out = templates.update(t.id, validateTemplate(req.body, catalogItems()));
+      auditTemplate(req, 'support.template.update', out);
+      return { template: view(req, out) };
+    })));
+    app.delete('/api/support/templates/:id', local((req) => {
+      const t = visibleTemplate(req, String(req.params.id));
+      if (t.id === SYSTEM_TEMPLATE_ID) throw new Forbidden('O modelo do sistema "Padrão" não pode ser excluído; o administrador pode editá-lo.');
+      if (!canEdit(req, t)) throw new Forbidden('Só o dono do modelo ou o administrador pode excluí-lo.');
+      templates.remove(t.id);
+      auditTemplate(req, 'support.template.delete', t);
+      return { ok: true };
+    }));
+  }
+
+  // Prévia: tarefas do modelo (templateId, ou o padrão da pessoa) e/ou tarefas por épico.
+  app.post('/api/support/preview', handle(async (req, ctx) => {
+    const keys = parseKeys(req.body?.keys);
+    const id = parseTemplateId(req.body?.templateId);
+    const template = id ? visibleTemplate(req, id) : defaultTemplate(req);
+    const tasks = req.body?.tasks === undefined ? undefined : parseTasks(req.body.tasks, keys, catalogItems());
+    const out = await ctx.supportService.preview(keys, { items: template?.items ?? [], ...(tasks ? { tasks } : {}) });
+    return { ...out, templateId: template?.id ?? null };
+  }));
+
+  // Criação: as tarefas escolhidas na prévia, por épico. templateId (opcional) guarda o último
+  // modelo usado e vai para a auditoria.
   app.post('/api/support/create', handle(async (req, ctx) => {
     const keys = parseKeys(req.body?.keys);
-    const models = parseModels(req.body?.models, keys);
-    const out = await (models === undefined ? ctx.supportService.create(keys) : ctx.supportService.create(keys, models));
-    auditWeb(audit, req, 'support.create', models === undefined ? { keys } : { keys, models });
+    const id = parseTemplateId(req.body?.templateId);
+    if (req.body?.tasks === undefined) throw new BadRequest('Informe as tarefas a criar em cada épico.');
+    const tasks = parseTasks(req.body.tasks, keys, catalogItems());
+    if (!Object.values(tasks).some((l) => l.length)) throw new BadRequest('Marque ao menos uma tarefa para criar.');
+    const t = id && templates ? templates.get(id) : null;
+    const template = t && templates.isVisible(t, req.user) ? t : null;
+    const out = await ctx.supportService.create(keys, tasks);
+    if (template) {
+      try { templates.setLastUsed(req.user.id, template.id); } catch (err) { console.error('[modelos]', err?.message); }
+    }
+    auditWeb(audit, req, 'support.create', {
+      keys, templateId: template?.id ?? null, template: template?.name ?? null,
+      tasks: (out.results ?? []).map((r) => ({ epic: r.epic, cat: r.cat ?? null, size: r.size ?? null, status: r.status, ...(r.key ? { key: r.key } : {}) })),
+    });
     return out;
   }));
 }
@@ -412,6 +510,7 @@ export function createApp({
   if (mcp && !oauth) throw new Error('createApp: mcp exige oauth.');
   audit ??= db ? createAuditRepo(db, now) : null;
   const catalog = db ? createCatalogRepo(db, now) : null;
+  const templates = db ? createTemplateRepo(db, now) : null;
   const app = express();
   app.set('case sensitive routing', true);
   const stripPort = (h) => String(h ?? '').replace(/:\d+$/, '').toLowerCase();
@@ -505,7 +604,7 @@ export function createApp({
     return { request, ...result };
   }));
 
-  registerSupportRoutes(app, { audit });
+  registerSupportRoutes(app, { audit, catalog, templates, users });
   registerWorklogRoutes(app, { audit, catalog });
   if (autoRunner) registerAutoRoutes(app, { autoRunner, audit });
   if (holidayProvider) {

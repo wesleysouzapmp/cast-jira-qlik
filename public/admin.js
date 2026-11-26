@@ -1,4 +1,5 @@
-// Administração: lista de usuários, convites, links de redefinição e ativação.
+// Administração: lista de usuários, convites, links de redefinição, ativação e a chave
+// "Pode criar modelos" (tarefas de apoio).
 const $ = (id) => document.getElementById(id);
 
 async function api(method, path, body) {
@@ -78,6 +79,32 @@ async function carregar() {
     celula(tr, PAPEL[u.role] ?? u.role);
     celula(tr, TOKEN[u.tokenStatus] ?? u.tokenStatus);
     celula(tr, u.active ? 'ativo' : 'desativado');
+    const modelos = celula(tr, '');
+    if (u.role === 'admin') modelos.textContent = 'sempre (administrador)';
+    else {
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = Boolean(u.canCreateTemplates);
+      box.setAttribute('aria-label', `${u.name} pode criar modelos de tarefas de apoio`);
+      box.addEventListener('change', async () => {
+        box.disabled = true;
+        try {
+          await api('PUT', `/api/admin/usuarios/${encodeURIComponent(u.id)}/modelos`, { pode: box.checked });
+          aviso(box.checked ? `${u.name} agora pode criar modelos.` : `${u.name} não pode mais criar modelos.`, true);
+        } catch (err) {
+          box.checked = !box.checked;
+          aviso(err.message, false);
+        } finally {
+          box.disabled = false;
+          texto.textContent = box.checked ? ' sim' : ' não';
+        }
+      });
+      const texto = document.createTextNode(box.checked ? ' sim' : ' não');
+      const rotulo = document.createElement('label');
+      rotulo.className = 'inline';
+      rotulo.append(box, texto);
+      modelos.append(rotulo);
+    }
     const acoes = celula(tr, '');
     acoes.className = 'row-actions';
     acoes.append(botao('link de nova senha', async () => {

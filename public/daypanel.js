@@ -18,7 +18,7 @@ function el(tag, props = {}, ...children) {
 
 const fmtDate = (date) => date.split('-').reverse().join('/');
 
-// tasks: [{ key, model, epicKey }] — destinos possíveis ao mudar a tarefa (tarefas de apoio).
+// tasks: [{ key, model, label, epicKey }] — destinos possíveis ao mudar a tarefa (tarefas de apoio).
 export function openDayPanel({ dialog, date, entries, tasks, limit, onSaved, onUsePeriod }) {
   const rows = entries.map((e) => ({
     orig: e,
@@ -54,7 +54,7 @@ export function openDayPanel({ dialog, date, entries, tasks, limit, onSaved, onU
   function taskOptions(r) {
     const opts = [];
     if (!tasks.some((t) => t.key === r.orig.issueKey)) opts.push(el('option', { value: r.orig.issueKey }, `${r.orig.issueKey} (atual)`));
-    for (const t of tasks) opts.push(el('option', { value: t.key }, `${t.key} · ${MODEL_LABEL[t.model] ?? t.model} · ${t.epicKey}`));
+    for (const t of tasks) opts.push(el('option', { value: t.key }, `${t.key} · ${t.label ?? MODEL_LABEL[t.model] ?? t.model} · ${t.epicKey}`));
     const sel = el('select', { disabled: busy || r.del || Boolean(r.result) }, ...opts);
     sel.value = r.taskKey;
     sel.addEventListener('change', () => { r.taskKey = sel.value; render(); });

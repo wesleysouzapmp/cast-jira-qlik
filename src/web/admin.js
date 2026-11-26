@@ -59,4 +59,14 @@ export function registerAdmin(app, { users, sessions, contexts, config, audit, o
     auditLog(audit, req, 'admin.ativo', { userId: u.id, ativo });
     return { ok: true };
   }));
+
+  // "Pode criar modelos" de tarefas de apoio (o admin sempre pode; a chave vale para usuários comuns).
+  app.put('/api/admin/usuarios/:id/modelos', route((req) => {
+    const pode = req.body?.pode;
+    if (typeof pode !== 'boolean') throw new HttpError(400, 'Informe pode: true ou false.');
+    const u = target(req);
+    users.setCanCreateTemplates(u.id, pode);
+    auditLog(audit, req, 'admin.modelos', { userId: u.id, pode });
+    return { ok: true };
+  }));
 }

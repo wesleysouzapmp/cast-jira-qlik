@@ -165,6 +165,37 @@ export const MIGRATIONS = [
     updated_by TEXT REFERENCES users(id) ON DELETE SET NULL
   );
   `,
+  // Modelos de tarefas de apoio: lista ordenada de { CAT, tamanho, título, descrição }.
+  // owner_id NULL = modelo do sistema (só o admin edita; usuário apagado deixa os modelos dele assim). users.can_create_templates: o admin
+  // habilita usuários comuns a criar modelos. user_settings.last_template_id: último modelo usado.
+  // O "Padrão" repete os textos de src/support/models.js (Análise CAT-105 M e Implementação CAT-166 P).
+  `
+  CREATE TABLE support_templates (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    is_public  INTEGER NOT NULL DEFAULT 0,
+    owner_id   TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX idx_support_templates_owner ON support_templates(owner_id);
+  CREATE TABLE support_template_items (
+    template_id TEXT NOT NULL REFERENCES support_templates(id) ON DELETE CASCADE,
+    position    INTEGER NOT NULL,
+    cat         TEXT NOT NULL,
+    size        TEXT NOT NULL CHECK (size IN ('P','M','G','Hora')),
+    summary     TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (template_id, position)
+  );
+  ALTER TABLE users ADD COLUMN can_create_templates INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE user_settings ADD COLUMN last_template_id TEXT REFERENCES support_templates(id) ON DELETE SET NULL;
+  INSERT INTO support_templates (id, name, is_public, owner_id, created_at, updated_at)
+    VALUES ('padrao', 'Padrão', 1, NULL, CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000);
+  INSERT INTO support_template_items (template_id, position, cat, size, summary, description) VALUES
+    ('padrao', 0, 'CAT-105', 'M', 'Analise da demanda {EPICO}', 'Analise da demanda {EPICO}. Levantamento das necessidades para execução.'),
+    ('padrao', 1, 'CAT-166', 'P', 'Implementação da demanda {EPICO}', 'Desenvolvimento e Testes da Demanda {EPICO}. Criação de scripts Python, AQL e desenvolvimento de telas para atender a necessidade do usuário chave.');
+  `,
 ];
 
 export function migrate(db) {

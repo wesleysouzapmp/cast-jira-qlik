@@ -1,5 +1,7 @@
-// Configuração das "Tarefas de apoio" criadas no QSENSE para cada épico.
-// Para mudar os textos, edite só este arquivo. {EPICO} vira "<chave> - <resumo do épico>".
+// Configuração das "Tarefas de apoio" do QSENSE. As tarefas criadas vêm dos modelos mantidos no
+// app (tabela support_templates; o "Padrão" repete os textos abaixo). MODELS continua valendo para
+// reconhecer Análise/Implementação nas tarefas existentes e para as frases dos apontamentos.
+// {EPICO} vira "<chave> - <resumo do épico>".
 // comments: frases sorteadas para os apontamentos de horas ({EPICO} e {TAREFA} são substituídos).
 
 export const QSENSE = {
@@ -12,6 +14,7 @@ export const QSENSE = {
 export const MODELS = [
   {
     id: 'analise',
+    cat: 'CAT-105',
     prefix: 'Analise da demanda',
     summary: 'Analise da demanda {EPICO}',
     description: 'Analise da demanda {EPICO}. Levantamento das necessidades para execução.',
@@ -33,6 +36,7 @@ export const MODELS = [
   },
   {
     id: 'implementacao',
+    cat: 'CAT-166',
     prefix: 'Implementação da demanda',
     summary: 'Implementação da demanda {EPICO}',
     description: 'Desenvolvimento e Testes da Demanda {EPICO}. Criação de scripts Python, AQL e desenvolvimento de telas para atender a necessidade do usuário chave.',

@@ -43,7 +43,7 @@
         <button id="btnRefresh">Atualizar</button>
         <button id="btnCreate" class="primary" disabled>Criar tarefas de apoio (0)</button>
       </div>
-      <p class="help">Cada épico marcado recebe duas tarefas no QSENSE: <em>Analise da demanda</em> (CAT-105) e <em>Implementação da demanda</em> (CAT-166). Você confere a prévia antes de criar.</p>
+      <p class="help">Cada épico marcado recebe no QSENSE as tarefas do modelo escolhido na prévia (o "Padrão" cria <em>Analise da demanda</em>, CAT-105, e <em>Implementação da demanda</em>, CAT-166). Na prévia você ajusta CAT, tamanho e textos, e pode adicionar tarefas avulsas antes de criar.</p>
       <div id="truncatedNote" class="banner" hidden>Mostrando os primeiros 1000 itens atribuídos.</div>
       <div id="errorBox" class="error" hidden></div>
       <div class="grid-wrap">
@@ -55,15 +55,49 @@
         </table>
       </div>
     </section>
+
+    <section class="panel" id="templatesPanel">
+      <div class="actions">
+        <h2>Modelos</h2>
+        <span class="spacer"></span>
+        <button id="btnNewTemplate" hidden>Novo modelo</button>
+      </div>
+      <p class="help">Cada modelo é uma lista de tarefas com CAT, tamanho, título e descrição. <code>{EPICO}</code> vira “chave - resumo do épico”. Públicos: todos usam; privados: só quem criou.</p>
+      <p id="templatesNote" class="help reminder" hidden>Você pode usar os modelos, mas não criar nem alterar. Para isso, peça ao administrador para habilitar.</p>
+      <div id="templatesError" class="error" hidden></div>
+      <table class="small">
+        <thead><tr><th>Nome</th><th>Visibilidade</th><th>Dono</th><th>Tarefas</th><th>Ações</th></tr></thead>
+        <tbody id="templates"><tr><td colspan="5" class="muted">Carregando…</td></tr></tbody>
+      </table>
+    </section>
   </main>
 
-  <dialog id="previewDialog">
+  <dialog id="previewDialog" class="wide">
     <h2>Confirmar criação no QSENSE</h2>
+    <label class="inline tpl-pick">Modelo <select id="previewTemplate"></select></label>
+    <div id="previewError" class="error" hidden></div>
     <div id="previewBody"></div>
     <div class="actions">
       <span class="spacer"></span>
       <button id="btnCancel">Cancelar</button>
       <button id="btnConfirm" class="primary">Confirmar e criar</button>
+    </div>
+  </dialog>
+
+  <dialog id="templateDialog" class="wide">
+    <h2 id="templateTitle">Novo modelo</h2>
+    <div class="form-row">
+      <label>Nome <input type="text" id="tplName" maxlength="80"></label>
+      <label class="inline"><input type="checkbox" id="tplPublic"> Público (todos os usuários veem e usam)</label>
+    </div>
+    <p class="help">Sugestão de título: “tarefa do CAT no catálogo da demanda {EPICO}”. Até 20 tarefas; título com até 255 e descrição com até 2000 caracteres.</p>
+    <div id="tplItems"></div>
+    <div class="tk-tools"><button type="button" id="btnTplAdd">Adicionar tarefa</button></div>
+    <div id="tplError" class="error" hidden></div>
+    <div class="actions">
+      <span class="spacer"></span>
+      <button id="btnTplCancel">Cancelar</button>
+      <button id="btnTplSave" class="primary">Salvar modelo</button>
     </div>
   </dialog>
 

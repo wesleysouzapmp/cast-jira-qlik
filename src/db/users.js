@@ -8,6 +8,7 @@ function mapUser(r) {
   return {
     id: r.id, email: r.email, name: r.name, role: r.role,
     active: r.active === 1, passwordHash: r.password_hash, createdAt: r.created_at,
+    canCreateTemplates: r.can_create_templates === 1,
   };
 }
 
@@ -21,6 +22,7 @@ export function createUserRepo(db, masterKey, now = () => Date.now()) {
       FROM users u LEFT JOIN user_secrets s ON s.user_id = u.id ORDER BY u.created_at, u.email`),
     setActive: db.prepare('UPDATE users SET active = ? WHERE id = ?'),
     setPassword: db.prepare('UPDATE users SET password_hash = ? WHERE id = ?'),
+    setCanCreateTemplates: db.prepare('UPDATE users SET can_create_templates = ? WHERE id = ?'),
     secrets: db.prepare('SELECT * FROM user_secrets WHERE user_id = ?'),
     setJira: db.prepare(`INSERT INTO user_secrets (user_id, jira_email, jira_account_id, jira_token_enc, token_status, checked_at)
       VALUES (?, ?, ?, ?, 'ok', ?)
@@ -51,6 +53,8 @@ export function createUserRepo(db, masterKey, now = () => Date.now()) {
     },
     setActive(id, active) { q.setActive.run(active ? 1 : 0, id); },
     setPassword(id, hash) { q.setPassword.run(hash, id); },
+    // "Pode criar modelos" de tarefas de apoio (o admin sempre pode).
+    setCanCreateTemplates(id, on) { q.setCanCreateTemplates.run(on ? 1 : 0, id); },
 
     getSecrets(id) {
       const r = q.secrets.get(id);

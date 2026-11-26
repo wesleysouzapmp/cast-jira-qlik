@@ -6,20 +6,11 @@
 import { QSENSE } from '../support/models.js';
 import { JiraError, jiraMessage } from '../support/service.js';
 import { catOf, normSize, ustOf } from '../shared/ustCatalog.js';
+import { optionText, sizeFieldIn, pickOption, pickCatOption } from '../support/jiraFields.js';
 
-const SIZE_FIELD_NAME = 'tamanho';
-const norm = (s) => String(s ?? '').trim().toLowerCase();
 const round2 = (n) => Math.round(n * 100) / 100;
 const shiftDay = (date, n) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 const nextDay = (date) => shiftDay(date, 1);
-
-// Texto de um campo de opção do Jira: opção ({ value }), cascata ({ value, child }), lista ou texto.
-function optionText(v) {
-  if (v === null || v === undefined) return '';
-  if (typeof v === 'string' || typeof v === 'number') return String(v);
-  if (Array.isArray(v)) return v.map(optionText).filter(Boolean).join(', ');
-  return v.child?.value ? `${v.value ?? ''} › ${v.child.value}` : String(v.value ?? v.name ?? '');
-}
 
 export function createUstCalculator({ client, baseUrl, myWorklogs }) {
   const browse = (key) => `${baseUrl}/browse/${key}`;
@@ -45,11 +36,9 @@ export function createUstCalculator({ client, baseUrl, myWorklogs }) {
   async function findSizeField() {
     if (sizeField) return sizeField;
     const fields = await call({ method: 'GET', path: '/rest/api/3/field' }, 'Campos do Jira');
-    const matches = (fields ?? []).filter((f) => norm(f.name) === SIZE_FIELD_NAME);
-    const f = matches.find((x) => x.custom) ?? matches[0];
     // Só guarda quando achou: o campo pode ser criado ou renomeado depois.
-    if (f) sizeField = { id: f.id, name: f.name };
-    return f ? sizeField : null;
+    sizeField = sizeFieldIn(fields) ?? undefined;
+    return sizeField ?? null;
   }
 
   // catalog: itens { cat, size, ust } do catálogo de UST.
@@ -177,32 +166,6 @@ export function createUstCalculator({ client, baseUrl, myWorklogs }) {
   // Valida CAT + tamanho no catálogo e usa as opções que o Jira oferece nessa tarefa (editmeta).
   let queue = Promise.resolve();
   let myAccountId = null;
-
-  // Opção do campo no Jira para o tamanho: ignora desativadas; prefere o texto exato ("M");
-  // senão aceita uma única opção que normalize para o tamanho ("M - Médio"). Mais de uma: ambíguo.
-  function pickOption(allowed, size) {
-    const active = allowed.filter((o) => o?.disabled !== true);
-    const label = (o) => String(o.value ?? o.name ?? '');
-    const exact = active.filter((o) => norm(label(o)) === norm(size));
-    if (exact.length === 1) return { opt: exact[0] };
-    const close = exact.length ? exact : active.filter((o) => normSize(label(o)) === size);
-    if (close.length === 1) return { opt: close[0] };
-    if (!close.length) return { error: `O Jira não oferece o valor ${size} no campo Tamanho desta tarefa.` };
-    return { error: `O campo Tamanho tem mais de uma opção para ${size} (${close.map(label).join(', ')}); ajuste no Jira.` };
-  }
-
-  // Opção do Item do Catálogo (cascata pai › filho) cujo filho tem o código CAT pedido; ignora desativadas.
-  function pickCatOption(allowed, cat) {
-    const found = [];
-    for (const parent of allowed.filter((o) => o?.disabled !== true)) {
-      for (const child of (parent.children ?? []).filter((c) => c?.disabled !== true)) {
-        if (catOf(child.value ?? child.name) === cat) found.push({ parent, child });
-      }
-    }
-    if (found.length === 1) return { value: { id: String(found[0].parent.id), child: { id: String(found[0].child.id) } } };
-    if (!found.length) return { error: `O Jira não oferece o ${cat} no Item do Catálogo desta tarefa.` };
-    return { error: `O Item do Catálogo tem mais de uma opção para ${cat} (${found.map((f) => `${f.parent.value} › ${f.child.value}`).join('; ')}); ajuste no Jira.` };
-  }
 
   function changeSizes(args) {
     const run = queue.then(() => changeSizesNow(args));

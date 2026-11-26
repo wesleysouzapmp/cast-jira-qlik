@@ -9,6 +9,8 @@
 //   possível regravar com os tokens simulados mostrados no console (outro token = Jira recusa).
 // - Jira do admin: BI-9999 simula o Jira recusando a criação de tarefas; há um apontamento às
 //   09:00–10:00 da segunda-feira da semana atual, para ver o gerador desviando dele.
+// - Tarefas de apoio: createmeta simulado com CAT-105/166/200 (CAT-201 desativado no Jira, para ver
+//   o erro) e Tamanho P/M/G/Hora; teste@local começa sem "Pode criar modelos" (ligue em Usuários).
 // - "Gerar com IA" fica desligado (nenhuma chave Anthropic; a validação de chave sempre recusa).
 import { randomBytes } from 'node:crypto';
 import { createApp } from '../src/server.js';
@@ -58,6 +60,8 @@ const task = (key, parent, model, status, size) => ({
 const CAT_OPTIONS = [{ id: '11927', value: 'Business Intelligence', children: [
   { id: '11930', value: 'CAT-105 - Realizar diagnóstico de incidente, problema, erro ou demanda na solução de BI' },
   { id: '12117', value: 'CAT-166 - Manter script de carga do Qlik Sense' },
+  { id: '12200', value: 'CAT-200 - Revisar painel do Qlik Sense' },
+  { id: '12201', value: 'CAT-201 - Opção desativada (simulada)', disabled: true },
 ] }];
 const SIZE_OPTIONS = [{ id: '701', value: 'P' }, { id: '702', value: 'M' }, { id: '703', value: 'G' }, { id: '704', value: 'Hora' }];
 const FIELDS = [{ id: 'summary', name: 'Resumo', custom: false }, { id: 'customfield_10104', name: 'Item do Catálogo', custom: true }, { id: 'customfield_10300', name: 'Tamanho', custom: true }];
@@ -157,6 +161,17 @@ function createMockJira({ me, displayName, issues: list, worklogs, nextIssue = 5
         }
         return ok({ issues: found, isLast: true });
       }
+      // Campos da criação de "Tarefa de apoio" no QSENSE (paginado como o Jira: fields + total).
+      if (path === '/rest/api/3/issue/createmeta/QSENSE/issuetypes/10002') {
+        const all = [
+          { fieldId: 'summary', name: 'Resumo', required: true },
+          { fieldId: 'customfield_10104', name: 'Item do Catálogo', required: false, allowedValues: CAT_OPTIONS },
+          { fieldId: 'customfield_10300', name: 'Tamanho', required: false, allowedValues: SIZE_OPTIONS },
+        ];
+        const startAt = Number(query.startAt ?? 0);
+        const maxResults = Number(query.maxResults ?? 50);
+        return ok({ startAt, maxResults, total: all.length, fields: all.slice(startAt, startAt + maxResults) });
+      }
       let em;
       if ((em = path.match(/^\/rest\/api\/3\/issue\/([^/]+)\/editmeta$/))) {
         const i = issues.get(em[1]);
@@ -185,8 +200,19 @@ function createMockJira({ me, displayName, issues: list, worklogs, nextIssue = 5
       if (path === '/rest/api/3/issue' && method === 'POST') {
         await sleep(400);
         if (body.fields.parent.key === 'BI-9999') return { status: 400, ok: false, data: { errorMessages: [], errors: { customfield_10104: 'Opção selecionada inválida (simulado)' } } };
+        // Opções pelo id, como o Jira: cascata do Item do Catálogo e Tamanho (customfield_10300).
+        const catIn = body.fields.customfield_10104;
+        const parentOpt = CAT_OPTIONS.find((o) => o.id === catIn?.id);
+        const childOpt = parentOpt?.children.find((c) => c.id === catIn?.child?.id && !c.disabled);
+        if (!childOpt) return { status: 400, ok: false, data: { errorMessages: [], errors: { customfield_10104: 'Item do Catálogo inválido (simulado)' } } };
+        const sizeOpt = SIZE_OPTIONS.find((o) => o.id === body.fields.customfield_10300?.id);
+        if (!sizeOpt) return { status: 400, ok: false, data: { errorMessages: [], errors: { customfield_10300: 'Tamanho inválido (simulado)' } } };
         const key = `QSENSE-${nextIssue++}`;
-        issues.set(key, { key, fields: { summary: body.fields.summary, issuetype: { name: 'Tarefa de apoio', hierarchyLevel: 0 }, status: { name: 'Aberto' }, parent: { key: body.fields.parent.key }, timespent: 0, customfield_10104: body.fields.customfield_10104 } });
+        issues.set(key, { key, fields: {
+          summary: body.fields.summary, assignee: { accountId: me }, issuetype: { name: 'Tarefa de apoio', hierarchyLevel: 0 }, status: { name: 'Aberto' }, parent: { key: body.fields.parent.key }, timespent: 0,
+          customfield_10104: { id: parentOpt.id, value: parentOpt.value, child: { id: childOpt.id, value: childOpt.value } },
+          customfield_10300: { value: sizeOpt.value },
+        } });
         return ok({ id: String(90000 + nextIssue), key }, 201);
       }
       let m;
@@ -267,6 +293,9 @@ createCatalogRepo(db).replaceAll([
   { cat: 'CAT-105', size: 'P', ust: 0.4, task: 'Realizar diagnóstico', description: 'Revisão da atividade' },
   { cat: 'CAT-105', size: 'M', ust: 8, task: 'Realizar diagnóstico', description: 'Diagnóstico de Incidente' },
   { cat: 'CAT-166', size: 'P', ust: 8, task: 'Manter script de carga do Qlik Sense', description: 'Script de carga do Qlik Sense' },
+  { cat: 'CAT-200', size: 'P', ust: 2, task: 'Revisar painel do Qlik Sense', description: 'Revisão pequena' },
+  { cat: 'CAT-200', size: 'G', ust: 6, task: 'Revisar painel do Qlik Sense', description: 'Revisão grande' },
+  { cat: 'CAT-201', size: 'M', ust: 3, task: 'Opção desativada no Jira', description: 'Para ver o erro de opção desativada' },
 ], null);
 
 const app = createApp({

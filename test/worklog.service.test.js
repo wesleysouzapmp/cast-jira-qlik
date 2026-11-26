@@ -350,3 +350,51 @@ test('batida duplicada por falha ao apagar não pode ser movida de novo', async 
   await assert.rejects(svc.batch({ changes: [upd('8', 'QSENSE-1', '2026-11-09', '15:00', 60, 'x', 'QSENSE-3')] }), ScopeError);
   assert.equal(jira.calls.filter((c) => c.method === 'POST' && /\/worklog$/.test(c.path)).length, 1);
 });
+
+// Tarefa de apoio criada por um modelo com outro CAT (não é Análise nem Implementação).
+const catIssue = (key, parent, cat, text, status = 'Aberto', assignee = ME) => ({
+  key,
+  fields: {
+    summary: `${text} da demanda ${parent}`, status: { name: status }, parent: { key: parent }, timespent: 0, assignee: { accountId: assignee },
+    issuetype: { name: 'Tarefa de apoio', hierarchyLevel: 0 },
+    customfield_10104: { id: '11927', value: 'Business Intelligence', child: { id: '13000', value: `${cat} - ${text}` } },
+  },
+});
+
+test('escopo inclui qualquer tarefa de apoio com CAT, com rótulo do catálogo e ordem Análise, Implementação, demais', async () => {
+  const { svc } = setup({ issues: [
+    epicIssue('BI-1', 'Aberto'),
+    catIssue('QSENSE-1', 'BI-1', 'CAT-200', 'Revisar painel'),
+    taskIssue('QSENSE-5', 'BI-1', 'implementacao', 'Aberto'),
+    taskIssue('QSENSE-9', 'BI-1', 'analise', 'Aberto'),
+    { key: 'QSENSE-7', fields: { summary: 'Sem catálogo', status: { name: 'Aberto' }, parent: { key: 'BI-1' }, issuetype: { name: 'Tarefa', hierarchyLevel: 0 } } },
+  ] });
+  const { epics } = await svc.listTasks();
+  assert.deepEqual(epics[0].tasks.map((t) => [t.key, t.model, t.cat, t.label]), [
+    ['QSENSE-9', 'analise', 'CAT-105', 'Análise'],
+    ['QSENSE-5', 'implementacao', 'CAT-166', 'Implementação'],
+    ['QSENSE-1', 'avulsa', 'CAT-200', 'CAT-200 - Revisar painel'],
+  ]);
+});
+
+test('prévia e gravação numa tarefa de apoio com outro CAT usam as frases genéricas e movem o status', async () => {
+  const { svc, jira } = setup({ issues: [epicIssue('BI-1', 'Aberto'), catIssue('QSENSE-1', 'BI-1', 'CAT-200', 'Revisar painel')] });
+  const p = await svc.preview({ items: [{ taskKey: 'QSENSE-1', minutes: 60 }], from: '2026-03-02', to: '2026-03-02', schedule: DEFAULT_SCHEDULE });
+  assert.equal(p.entries.length, 1);
+  assert.match(p.entries[0].comment, /QSENSE-1 - Revisar painel da demanda BI-1/);
+  assert.deepEqual(p.transitions.map((t) => t.key), ['QSENSE-1', 'BI-1']);
+  const r = await svc.submit({ entries: [entry('QSENSE-1', '2026-03-02', '08:00', 60)] });
+  assert.equal(r.results[0].status, 'created');
+  assert.equal(jira.issues.get('QSENSE-1').fields.status.name, 'Em Execução');
+});
+
+test('escopo: tarefas com outro CAT só entram quando atribuídas a você', async () => {
+  const { svc } = setup({ issues: [
+    epicIssue('BI-1', 'Aberto'),
+    taskIssue('QSENSE-9', 'BI-1', 'analise', 'Aberto'),
+    catIssue('QSENSE-1', 'BI-1', 'CAT-200', 'Revisar painel'),
+    catIssue('QSENSE-2', 'BI-1', 'CAT-201', 'Tarefa do colega', 'Aberto', 'acc-colega'),
+  ] });
+  const { epics } = await svc.listTasks();
+  assert.deepEqual(epics[0].tasks.map((t) => t.key), ['QSENSE-9', 'QSENSE-1']);
+});

@@ -131,9 +131,24 @@ function renderEpics() {
     const head = el('div', { class: 'ep-row' },
       el('strong', {}, link(e.key, e.url), ` - ${e.summary}`),
       el('span', { class: 'badge' }, e.status));
-    const splitBox = el('input', { type: 'checkbox', checked: ui.split, disabled: e.tasks.length < 2 });
+    // Dividir total (Análise/Implementação por percentual): épicos com exatamente uma tarefa de cada;
+    // as demais tarefas do épico continuam com horas por tarefa.
+    const count = (m) => e.tasks.filter((t) => t.model === m).length;
+    const canSplit = count('analise') === 1 && count('implementacao') === 1;
+    const splitPair = (t) => t.model === 'analise' || t.model === 'implementacao';
+    if (!canSplit) ui.split = false;
+    const splitBox = el('input', { type: 'checkbox', checked: ui.split, disabled: !canSplit, title: canSplit ? 'Divide o total entre a Análise e a Implementação; as demais tarefas seguem por tarefa.' : 'Só para épicos com uma tarefa de Análise e uma de Implementação; nos demais, aponte por tarefa.' });
     splitBox.addEventListener('change', () => { ui.split = splitBox.checked; renderEpics(); });
 
+    const taskRow = (t) => {
+      const c = hoursControls(ui, t.key);
+      return el('div', { class: 'task-row' },
+        c.check,
+        el('span', { class: 'task-name' }, link(t.key, t.url), ` ${t.label ?? MODEL_LABEL[t.model]}`),
+        el('span', { class: 'badge' }, t.status),
+        el('span', { class: 'muted' }, `apontado: ${t.timeSpentMin ? formatDuration(t.timeSpentMin) : '0'}`),
+        ...c.rest);
+    };
     let body;
     if (ui.split) {
       const total = el('input', { value: ui.total, placeholder: 'ex.: 4h', class: 'short' });
@@ -154,17 +169,10 @@ function renderEpics() {
       update();
       body = el('div', {},
         el('div', { class: 'task-row' }, el('label', { class: 'inline' }, 'Dia do apontamento', day), el('label', { class: 'inline' }, 'Total', total), el('label', { class: 'inline' }, '% Análise', pct), info),
-        el('div', { class: 'muted' }, 'Até 8h no dia, somando os apontamentos de outras tarefas; a sobra vai para o próximo dia útil.'));
+        el('div', { class: 'muted' }, 'Até 8h no dia, somando os apontamentos de outras tarefas; a sobra vai para o próximo dia útil.'),
+        ...e.tasks.filter((t) => !splitPair(t)).map(taskRow));
     } else {
-      body = el('div', {}, ...e.tasks.map((t) => {
-        const c = hoursControls(ui, t.key);
-        return el('div', { class: 'task-row' },
-          c.check,
-          el('span', { class: 'task-name' }, link(t.key, t.url), ` ${MODEL_LABEL[t.model]}`),
-          el('span', { class: 'badge' }, t.status),
-          el('span', { class: 'muted' }, `apontado: ${t.timeSpentMin ? formatDuration(t.timeSpentMin) : '0'}`),
-          ...c.rest);
-      }));
+      body = el('div', {}, ...e.tasks.map(taskRow));
     }
     return el('div', { class: 'epic-block' }, head, el('label', { class: 'inline' }, splitBox, 'Dividir total entre as tarefas'), body);
   }));
@@ -174,23 +182,25 @@ function readItems() {
   const items = [];
   for (const e of state.epics) {
     const ui = state.ui.get(e.key);
-    if (ui.split) {
+    const split = ui.split;
+    for (const t of e.tasks) {
+      // Com "Dividir total", Análise e Implementação vêm do total; as demais, por tarefa.
+      if (split && (t.model === 'analise' || t.model === 'implementacao')) continue;
+      if (!ui.checked[t.key]) continue;
+      const m = parseDuration(ui.hours[t.key]);
+      if (!m) throw new Error(`${t.key}: informe as horas (ex.: 1h 30m).`);
+      if (ui.perDay[t.key] && m > 480) throw new Error(`${t.key}: no máximo 8h por dia útil.`);
+      items.push({ taskKey: t.key, minutes: m, ...(ui.perDay[t.key] ? { perDay: true } : {}) });
+    }
+    if (split) {
       if (!ui.total) continue;
       const t = parseDuration(ui.total);
       if (!t) throw new Error(`${e.key}: total de horas inválido.`);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(ui.day ?? '')) throw new Error(`${e.key}: informe o dia do apontamento.`);
       const r = splitTotal(t, Math.min(Math.max(Number(ui.pct) || 0, 0), 100));
-      const byModel = Object.fromEntries(e.tasks.map((x) => [x.model, x.key]));
+      const byModel = Object.fromEntries(e.tasks.filter((x) => x.model === 'analise' || x.model === 'implementacao').map((x) => [x.model, x.key]));
       if (r.analise && byModel.analise) items.push({ taskKey: byModel.analise, minutes: r.analise, startDate: ui.day });
       if (r.implementacao && byModel.implementacao) items.push({ taskKey: byModel.implementacao, minutes: r.implementacao, startDate: ui.day });
-    } else {
-      for (const t of e.tasks) {
-        if (!ui.checked[t.key]) continue;
-        const m = parseDuration(ui.hours[t.key]);
-        if (!m) throw new Error(`${t.key}: informe as horas (ex.: 1h 30m).`);
-        if (ui.perDay[t.key] && m > 480) throw new Error(`${t.key}: no máximo 8h por dia útil.`);
-        items.push({ taskKey: t.key, minutes: m, ...(ui.perDay[t.key] ? { perDay: true } : {}) });
-      }
     }
   }
   const lu = state.looseUi;
@@ -243,7 +253,7 @@ function renderPreview(extra = {}) {
       ? (x.result.status === 'created' ? el('span', { class: 'ok' }, 'gravado') : el('span', { class: 'bad' }, `erro — ${x.result.error}`))
       : '';
     return el('tr', {},
-      el('td', {}, info ? link(x.taskKey, info.task.url) : x.taskKey, info ? ` ${MODEL_LABEL[info.task.model]}` : ''),
+      el('td', {}, info ? link(x.taskKey, info.task.url) : x.taskKey, info ? ` ${info.task.label ?? MODEL_LABEL[info.task.model]}` : ''),
       el('td', {}, x.date.split('-').reverse().join('/')),
       el('td', {}, x.start),
       el('td', {}, formatDuration(x.minutes)),

@@ -2,8 +2,8 @@
 // já existentes do usuário, monta a prévia (batidas + comentários) e grava os worklogs,
 // movendo tarefa e épico para "Em Execução" conforme as regras da spec.
 import { MODELS, QSENSE } from '../support/models.js';
-import { modelOfTask, toAdf } from '../support/render.js';
-import { JiraError, jiraMessage } from '../support/service.js';
+import { supportTaskInfo, toAdf } from '../support/render.js';
+import { JiraError, jiraMessage, byTaskOrder } from '../support/service.js';
 import { distribute, formatDuration, toJiraStarted, hhmmToMin, minToHhmm, addDays, ANCHOR_SPAN_DAYS } from './time.js';
 import { isAdf, adfToText } from '../shared/flatten.js';
 import { pickComments, GENERIC_MODEL } from './comments.js';
@@ -19,7 +19,7 @@ const EPIC_FROM = new Set(['Aberto', 'Priorizado', 'Em Análise', 'Aguardando Ex
 const OFFSET_MS = 3 * 3600 * 1000; // -03:00
 const BATCH = 50;
 
-const modelOrder = (id) => MODELS.findIndex((m) => m.id === id);
+const MODEL_LABEL = { analise: 'Análise', implementacao: 'Implementação' };
 const isEpicIssue = (i) => (i.fields?.issuetype?.hierarchyLevel ?? 0) >= 1 || /^(épico|epic)$/i.test(i.fields?.issuetype?.name ?? '');
 const chunk = (arr, n) => Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, i * n + n));
 const localStartMs = (date) => Date.parse(`${date}T00:00:00.000-03:00`);
@@ -72,15 +72,24 @@ export function createWorklogService({ client, baseUrl, supportService, ai, rng 
     const epics = items.map((e) => ({ key: e.key, summary: e.summary, status: e.status, url: e.url, tasks: [] }));
     const byEpic = new Map(epics.map((e) => [e.key, e]));
     for (const keys of chunk(epics.map((e) => e.key), BATCH)) {
-      const found = await search(`project = ${QSENSE.projectKey} AND parent in (${keys.join(', ')})`, ['summary', 'status', 'parent', 'timespent', QSENSE.catalogFieldId], 'Busca das tarefas de apoio');
+      const found = await search(`project = ${QSENSE.projectKey} AND parent in (${keys.join(', ')})`, ['summary', 'status', 'parent', 'timespent', 'assignee', QSENSE.catalogFieldId], 'Busca das tarefas de apoio');
       for (const t of found) {
-        const model = modelOfTask(t);
+        // Tarefa de apoio = Item do Catálogo com código CAT (ou Análise/Implementação antiga pelo título).
+        // As que não são Análise/Implementação usam as frases genéricas e o rótulo do catálogo.
+        const info = supportTaskInfo(t);
         const epic = byEpic.get(t.fields?.parent?.key);
-        if (!model || !epic) continue;
-        epic.tasks.push({ key: t.key, model: model.id, summary: t.fields.summary ?? '', status: t.fields.status?.name ?? '', url: browse(t.key), timeSpentMin: Math.round((t.fields.timespent ?? 0) / 60) });
+        if (!info || !epic) continue;
+        // Outros CATs só quando atribuídos a você (tarefas de colegas no mesmo épico ficam de fora).
+        if (!info.model && t.fields?.assignee?.accountId !== await me()) continue;
+        const model = info.model ?? GENERIC_MODEL.id;
+        epic.tasks.push({
+          key: t.key, model, cat: info.cat, label: MODEL_LABEL[model] ?? (info.catLabel || info.cat),
+          summary: t.fields.summary ?? '', status: t.fields.status?.name ?? '', url: browse(t.key), timeSpentMin: Math.round((t.fields.timespent ?? 0) / 60),
+        });
       }
     }
-    for (const e of epics) e.tasks.sort((a, b) => modelOrder(a.model) - modelOrder(b.model) || a.key.localeCompare(b.key));
+    const rank = (t) => ({ ...t, model: MODEL_LABEL[t.model] ? t.model : null });
+    for (const e of epics) e.tasks.sort((a, b) => byTaskOrder(rank(a), rank(b)));
     const tasks = new Map();
     epics.forEach((e, ei) => e.tasks.forEach((t, ti) => tasks.set(t.key, { ...t, epic: e, order: ei * 1000 + ti })));
     return { epics, tasks };
@@ -215,7 +224,7 @@ export function createWorklogService({ client, baseUrl, supportService, ai, rng 
     const comments = new Map();
     for (const [key, list] of byTask) {
       const t = scope.tasks.get(key);
-      const model = t.loose ? GENERIC_MODEL : MODELS.find((m) => m.id === t.model);
+      const model = (!t.loose && MODELS.find((m) => m.id === t.model)) || GENERIC_MODEL;
       comments.set(key, pickComments(model, { epicKey: t.epic?.key, epicSummary: t.epic?.summary, taskKey: key, taskSummary: t.summary }, list.length, rng));
     }
     const used = new Map();
