@@ -491,6 +491,14 @@ td.hours-cell { min-width: 150px; }
 @media (prefers-color-scheme: dark) { .urlbar { background: #0e0f11; border: 1px solid var(--border); } }
 #epPath.url-path { color: #e6edf3; }
 
+/* Tarefas de apoio em tela larga: lista dos itens à esquerda e Modelos numa coluna ao lado. */
+@media (min-width: 1400px) {
+  #apoioMain { display: grid; grid-template-columns: minmax(0, 1fr) minmax(460px, 30%); align-items: start; }
+  #apoioMain > #templatesPanel { position: sticky; top: 20px; }
+  #templatesPanel .help { max-width: none; }
+  #templatesPanel th, #templatesPanel td { white-space: normal; }
+}
+
 /* ---- Meus apontamentos: período marcado com Shift+clique ---- */
 .sel-bar { padding: 10px 14px; border-radius: 10px; background: var(--code-bg); margin: 4px 0 12px; }
 .page-note { margin: 0; }
