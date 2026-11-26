@@ -114,3 +114,27 @@ test('openDb(): se a migração falhar, fecha a conexão e repassa o erro', asyn
     for (const s of ['', '-wal', '-shm']) rmSync(file + s, { force: true });
   }
 });
+
+test('migração 6: user_settings.epic_project_id (texto, nulo) e o padrão por usuário', async () => {
+  const { epicSpaceFor } = await import('../src/db/userData.js');
+  const db = openDb();
+  const col = db.prepare('PRAGMA table_info(user_settings)').all().find((c) => c.name === 'epic_project_id');
+  assert.ok(col, 'falta user_settings.epic_project_id');
+  assert.equal(col.type, 'TEXT');
+  assert.equal(col.notnull, 0);
+  assert.ok(MIGRATIONS.length >= 6);
+  db.prepare("INSERT INTO users (id, email, name, password_hash, created_at) VALUES ('u1','a@b.c','A','h',1)").run();
+  db.prepare("INSERT INTO user_settings (user_id, auto_paused) VALUES ('u1', 1)").run();
+  const s = epicSpaceFor(db, 'u1');
+  assert.equal(s.get(), null);
+  s.set('300');
+  assert.equal(s.get(), '300');
+  s.set('100');
+  assert.equal(s.get(), '100');
+  // Não apaga as outras configurações da linha.
+  assert.equal(db.prepare("SELECT auto_paused FROM user_settings WHERE user_id = 'u1'").get().auto_paused, 1);
+  db.prepare("INSERT INTO users (id, email, name, password_hash, created_at) VALUES ('u2','b@b.c','B','h',1)").run();
+  epicSpaceFor(db, 'u2').set('7');
+  assert.equal(epicSpaceFor(db, 'u2').get(), '7');
+  db.close();
+});

@@ -196,6 +196,10 @@ export const MIGRATIONS = [
     ('padrao', 0, 'CAT-105', 'M', 'Analise da demanda {EPICO}', 'Analise da demanda {EPICO}. Levantamento das necessidades para execução.'),
     ('padrao', 1, 'CAT-166', 'P', 'Implementação da demanda {EPICO}', 'Desenvolvimento e Testes da Demanda {EPICO}. Criação de scripts Python, AQL e desenvolvimento de telas para atender a necessidade do usuário chave.');
   `,
+  // Espaço (projeto do Jira, id) usado na última criação de épico pelo calendário: vira o padrão.
+  `
+  ALTER TABLE user_settings ADD COLUMN epic_project_id TEXT;
+  `,
 ];
 
 export function migrate(db) {

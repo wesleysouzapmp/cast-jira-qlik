@@ -65,6 +65,14 @@ const CAT_OPTIONS = [{ id: '11927', value: 'Business Intelligence', children: [
 ] }];
 const SIZE_OPTIONS = [{ id: '701', value: 'P' }, { id: '702', value: 'M' }, { id: '703', value: 'G' }, { id: '704', value: 'Hora' }];
 const FIELDS = [{ id: 'summary', name: 'Resumo', custom: false }, { id: 'customfield_10104', name: 'Item do Catálogo', custom: true }, { id: 'customfield_10300', name: 'Tamanho', custom: true }];
+// Espaços para criar épico pelo calendário (GET /project/search?action=create&expand=issueTypes):
+// BI e DADOS têm tipo épico; SIJUD não (fica fora da lista); CPOS simula o Jira exigindo um campo a mais.
+const PROJECTS = [
+  { id: '10010', key: 'BI', name: 'Business Intelligence', issueTypes: [{ id: '10000', name: 'Epic', hierarchyLevel: 1 }, { id: '10001', name: 'História', hierarchyLevel: 0 }] },
+  { id: '10020', key: 'DADOS', name: 'Dados e Indicadores (simulado)', issueTypes: [{ id: '10100', name: 'Épico', hierarchyLevel: 1 }, { id: '10101', name: 'Subtarefa', hierarchyLevel: -1, subtask: true }] },
+  { id: '10030', key: 'SIJUD', name: 'SIJUD', issueTypes: [{ id: '10200', name: 'Tarefa', hierarchyLevel: 0 }] },
+  { id: '10040', key: 'CPOS', name: 'Espaço que exige campo extra (simulado)', issueTypes: [{ id: '10300', name: 'Epic', hierarchyLevel: 1 }] },
+];
 const sijud = (key, summary) => ({ key, fields: { summary, issuetype: { name: 'Tarefa', hierarchyLevel: 0 }, status: { name: 'Em Execução' }, project: { key: 'SIJUD' }, timespent: 0 } });
 
 // Dados do Jira do admin (o conjunto completo do mock antigo).
@@ -147,7 +155,8 @@ function createMockJira({ me, displayName, issues: list, worklogs, nextIssue = 5
           found = [...issues.values()].filter((i) => i.fields.customfield_10104)
             .map((i) => ({ ...i, fields: { ...i.fields, timespent: (worklogs[i.key] ?? []).reduce((s, w) => s + w.timeSpentSeconds, 0) } }));
         } else if (jql.includes('statusCategory = Done')) found = [...issues.values()].filter((i) => done(i) && i.fields.customfield_10104);
-        else if (jql.startsWith('assignee')) found = [...issues.values()].filter((i) => i.fields.project?.key === 'BI');
+        else if (jql.startsWith('assignee')) found = [...issues.values()].filter((i) => i.fields.project?.key === 'BI' || i.fields.issuetype?.hierarchyLevel === 1);
+        else if (jql.includes('parent is EMPTY')) found = [...issues.values()].filter((i) => i.key.startsWith('QSENSE-') && !i.fields.parent && i.fields.customfield_10104 && !done(i));
         else if (jql.startsWith('project = QSENSE')) {
           const keys = jql.match(/parent in \(([^)]*)\)/)[1].split(',').map((s) => s.trim());
           found = [...issues.values()].filter((i) => keys.includes(i.fields.parent?.key));
@@ -196,10 +205,26 @@ function createMockJira({ me, displayName, issues: list, worklogs, nextIssue = 5
         }
         return { status: 204, ok: true, data: '' };
       }
+      if (path === '/rest/api/3/project/search') {
+        const startAt = Number(query.startAt ?? 0);
+        const maxResults = Math.min(Number(query.maxResults ?? 50), 2); // páginas pequenas para exercitar a paginação
+        const values = query.expand === 'issueTypes' ? PROJECTS.slice(startAt, startAt + maxResults) : PROJECTS.slice(startAt, startAt + maxResults).map(({ issueTypes, ...p }) => p);
+        return ok({ startAt, maxResults, total: PROJECTS.length, isLast: startAt + maxResults >= PROJECTS.length, values });
+      }
       if (path === '/rest/api/3/issue/bulkfetch') return ok({ issues: body.issueIdsOrKeys.map((k) => issues.get(k)).filter(Boolean), issueErrors: [] });
       if (path === '/rest/api/3/issue' && method === 'POST') {
         await sleep(400);
-        if (body.fields.parent.key === 'BI-9999') return { status: 400, ok: false, data: { errorMessages: [], errors: { customfield_10104: 'Opção selecionada inválida (simulado)' } } };
+        // Épico (tipo hierarchyLevel 1 do projeto pelo id): CPOS recusa como um campo obrigatório extra.
+        const project = PROJECTS.find((p) => p.id === String(body.fields.project?.id ?? ''));
+        const epicType = project?.issueTypes.find((t) => t.id === String(body.fields.issuetype?.id ?? '') && t.hierarchyLevel === 1);
+        if (project) {
+          if (!epicType) return { status: 400, ok: false, data: { errorMessages: [], errors: { issuetype: 'Tipo de item inválido (simulado)' } } };
+          if (project.key === 'CPOS') return { status: 400, ok: false, data: { errorMessages: [], errors: { customfield_19999: 'Área responsável é obrigatório (simulado)' } } };
+          const key = `${project.key}-${nextIssue++}`;
+          issues.set(key, { key, fields: { summary: body.fields.summary, assignee: { accountId: me }, issuetype: { name: epicType.name, hierarchyLevel: 1 }, status: { name: 'Aberto' }, project: { key: project.key } } });
+          return ok({ id: String(90000 + nextIssue), key }, 201);
+        }
+        if (body.fields.parent?.key === 'BI-9999') return { status: 400, ok: false, data: { errorMessages: [], errors: { customfield_10104: 'Opção selecionada inválida (simulado)' } } };
         // Opções pelo id, como o Jira: cascata do Item do Catálogo e Tamanho (customfield_10300).
         const catIn = body.fields.customfield_10104;
         const parentOpt = CAT_OPTIONS.find((o) => o.id === catIn?.id);
@@ -209,7 +234,7 @@ function createMockJira({ me, displayName, issues: list, worklogs, nextIssue = 5
         if (!sizeOpt) return { status: 400, ok: false, data: { errorMessages: [], errors: { customfield_10300: 'Tamanho inválido (simulado)' } } };
         const key = `QSENSE-${nextIssue++}`;
         issues.set(key, { key, fields: {
-          summary: body.fields.summary, assignee: { accountId: me }, issuetype: { name: 'Tarefa de apoio', hierarchyLevel: 0 }, status: { name: 'Aberto' }, parent: { key: body.fields.parent.key }, timespent: 0,
+          summary: body.fields.summary, assignee: { accountId: me }, issuetype: { name: 'Tarefa de apoio', hierarchyLevel: 0 }, status: { name: 'Aberto' }, ...(body.fields.parent ? { parent: { key: body.fields.parent.key } } : {}), project: { key: 'QSENSE' }, timespent: 0,
           customfield_10104: { id: parentOpt.id, value: parentOpt.value, child: { id: childOpt.id, value: childOpt.value } },
           customfield_10300: { value: sizeOpt.value },
         } });

@@ -37,13 +37,14 @@ export function toAdf(text) {
 
 // task: { summary, description } (com {EPICO}); options: campos de opção já resolvidos no
 // createmeta (Item do Catálogo e Tamanho), { fieldId: valor }.
+// issue null = tarefa solta (sem épico): sem parent e textos usados como vieram (sem {EPICO}).
 export function buildCreateBody(task, issue, accountId, options = {}) {
-  const { summary, description } = renderModel(task, issue);
+  const { summary, description } = issue ? renderModel(task, issue) : { summary: task.summary, description: task.description ?? '' };
   return {
     fields: {
       project: { key: QSENSE.projectKey },
       issuetype: { id: QSENSE.issueTypeId },
-      parent: { key: issue.key },
+      ...(issue ? { parent: { key: issue.key } } : {}),
       summary,
       ...(description.trim() ? { description: toAdf(description) } : {}),
       components: [{ id: QSENSE.componentId }],

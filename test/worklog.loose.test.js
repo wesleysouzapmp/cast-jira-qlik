@@ -68,3 +68,24 @@ test('aiComments aceita avulsa e manda o resumo da tarefa como contexto', async 
   assert.equal(seen.entries[0].model, 'avulsa');
   assert.equal(seen.ctx['SIJUD-1'].taskSummary, 'Atendimento SIJUD');
 });
+
+test('tarefa de apoio sem épico, atribuída ao usuário, entra na lista e no escopo (sem transição)', async () => {
+  const solta = { key: 'QSENSE-50', fields: { summary: 'Revisar painel', status: { name: 'Aberto' }, issuetype: { name: 'Tarefa de apoio', hierarchyLevel: 0 }, timespent: 1800, customfield_10104: { id: '11927', child: { id: '12200', value: 'CAT-200 - Revisar painel' } } } };
+  const jira = createFakeJira({ issues: [epicIssue('BI-1', 'Aberto'), taskIssue('QSENSE-1', 'BI-1', 'analise', 'Aberto'), solta] });
+  const supportService = createSupportService({ client: jira.client, baseUrl: BASE });
+  const svc = createWorklogService({ client: jira.client, baseUrl: BASE, supportService, ai: { enabled: false }, rng: seeded() });
+  const { epics, loose } = await svc.listTasks();
+  assert.deepEqual(epics.map((e) => e.tasks.map((t) => t.key)), [['QSENSE-1']]);
+  assert.equal(loose.length, 1);
+  assert.equal(loose[0].key, 'QSENSE-50');
+  assert.equal(loose[0].cat, 'CAT-200');
+  assert.equal(loose[0].label, 'CAT-200 - Revisar painel');
+  assert.equal(loose[0].timeSpentMin, 30);
+  const search = jira.calls.find((c) => c.path === '/rest/api/3/search/jql' && /parent is EMPTY/.test(c.body.jql));
+  assert.match(search.body.jql, /project = QSENSE/);
+  assert.match(search.body.jql, /assignee = currentUser\(\)/);
+  assert.match(search.body.jql, /statusCategory != Done/);
+  const r = await svc.submit({ entries: [{ taskKey: 'QSENSE-50', date: '2026-11-09', start: '08:00', minutes: 60, comment: '' }] });
+  assert.equal(r.results[0].status, 'created');
+  assert.deepEqual(r.transitions, []);
+});

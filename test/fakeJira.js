@@ -1,7 +1,9 @@
 // Jira simulado com estado, para os testes do apontamento (não contém testes).
 export const ME = 'acc-me';
 
-export function createFakeJira({ issues = [], worklogs = {}, transitionsTo = { 'Em Execução': true }, failWorklogFor = [], failDeleteFor = [], delayMs = 0, indexLag = false, searchTz = 'local', unauthorized = false } = {}) {
+// projects/projectPageSize: espaços de GET /project/search (paginado). meta: campos do createmeta da
+// tarefa de apoio. failCreate(body): texto de erro para recusar um POST /issue (ou nada para criar).
+export function createFakeJira({ issues = [], worklogs = {}, transitionsTo = { 'Em Execução': true }, failWorklogFor = [], failDeleteFor = [], delayMs = 0, indexLag = false, searchTz = 'local', unauthorized = false, projects = [], projectPageSize = 50, meta = [], failCreate = null, nextIssue = 900 } = {}) {
   const byKey = new Map(issues.map((i) => [i.key, structuredClone(i)]));
   const wl = structuredClone(worklogs); // key → [{ id, author:{accountId}, started, timeSpentSeconds }]
   const calls = [];
@@ -19,7 +21,9 @@ export function createFakeJira({ issues = [], worklogs = {}, transitionsTo = { '
       if (path === '/rest/api/3/search/jql') {
         const jql = body.jql;
         let list = [];
-        if (jql.startsWith('assignee = currentUser()')) list = [...byKey.values()].filter((i) => i.fields.issuetype?.hierarchyLevel === 1);
+        if (jql.includes('parent is EMPTY')) {
+          list = [...byKey.values()].filter((i) => i.key.startsWith('QSENSE-') && !i.fields.parent && i.fields.customfield_10104 && !/^conclu/i.test(i.fields.status?.name ?? ''));
+        } else if (jql.startsWith('assignee = currentUser()')) list = [...byKey.values()].filter((i) => i.fields.issuetype?.hierarchyLevel === 1);
         else if (jql.startsWith('project = QSENSE')) {
           const keys = jql.match(/parent in \(([^)]*)\)/)[1].split(',').map((s) => s.trim());
           list = [...byKey.values()].filter((i) => keys.includes(i.fields.parent?.key));
@@ -33,6 +37,31 @@ export function createFakeJira({ issues = [], worklogs = {}, transitionsTo = { '
           list = [...byKey.values()].filter((i) => (wl[i.key] ?? []).some((w) => !(indexLag && w.fresh) && w.author.accountId === ME && day(w) >= from && day(w) <= to));
         }
         return ok({ issues: list, isLast: true });
+      }
+      if (path === '/rest/api/3/project/search') {
+        const startAt = Number(query.startAt ?? 0);
+        const size = Math.min(Number(query.maxResults ?? 50), projectPageSize);
+        const values = projects.slice(startAt, startAt + size);
+        return ok({ startAt, maxResults: size, total: projects.length, isLast: startAt + size >= projects.length, values });
+      }
+      if (path.startsWith('/rest/api/3/issue/createmeta/')) return ok({ startAt: 0, maxResults: 100, total: meta.length, fields: meta });
+      if (path === '/rest/api/3/issue' && method === 'POST') {
+        const err = failCreate?.(body);
+        if (err) return { status: 400, ok: false, data: { errorMessages: [err] } };
+        const f = body.fields;
+        const project = f.project?.id ? projects.find((p) => String(p.id) === String(f.project.id)) : null;
+        const type = project?.issueTypes?.find((t) => String(t.id) === String(f.issuetype?.id));
+        const key = `${project?.key ?? f.project?.key}-${nextIssue++}`;
+        const catIn = f.customfield_10104;
+        const catMeta = meta.find((x) => (x.fieldId ?? x.id) === 'customfield_10104')?.allowedValues ?? [];
+        const child = catMeta.flatMap((o) => o.children ?? []).find((c) => String(c.id) === String(catIn?.child?.id));
+        byKey.set(key, { key, fields: {
+          summary: f.summary, status: { name: 'Aberto' }, assignee: f.assignee, project: { key: project?.key ?? f.project?.key },
+          issuetype: type ? { name: type.name, hierarchyLevel: type.hierarchyLevel } : { name: 'Tarefa de apoio', hierarchyLevel: 0 },
+          ...(f.parent ? { parent: { key: f.parent.key } } : {}), timespent: 0,
+          ...(catIn ? { customfield_10104: { id: catIn.id, child: { id: catIn.child.id, value: child?.value ?? '' } } } : {}),
+        } });
+        return ok({ id: String(5000 + nextIssue), key }, 201);
       }
       if (path === '/rest/api/3/issue/bulkfetch') return ok({ issues: body.issueIdsOrKeys.map((k) => byKey.get(k)).filter(Boolean) });
       let m;

@@ -44,12 +44,25 @@ function renderSel() {
   $('selText').textContent = sel.from === sel.to ? fmtShort(sel.from) : `${fmtShort(sel.from)} a ${fmtShort(sel.to)}`;
 }
 
+// Tarefas de apoio (destinos de mover batida e "Tarefa existente" do novo apontamento), inclusive
+// as soltas (sem épico), e os épicos em aberto do usuário (como em Apontar horas).
 let tasks = [];
+let epics = [];
 async function loadTasks() {
   try {
     const r = await api('/api/worklog/tasks');
-    tasks = r.epics.flatMap((e) => e.tasks.map((t) => ({ key: t.key, model: t.model, label: t.label, epicKey: e.key })));
-  } catch { tasks = []; }
+    tasks = [
+      ...r.epics.flatMap((e) => e.tasks.map((t) => ({ key: t.key, model: t.model, label: t.label, epicKey: e.key }))),
+      ...(r.loose ?? []).map((t) => ({ key: t.key, model: t.model, label: t.label, epicKey: '' })),
+    ];
+    epics = r.epics.map((e) => ({ key: e.key, summary: e.summary }));
+  } catch { tasks = []; epics = []; }
+}
+
+// Catálogo de UST (CAT e tamanhos) para a nova tarefa do painel do dia.
+let catalog = [];
+async function loadCatalog() {
+  try { catalog = (await api('/api/ust/catalogo')).items ?? []; } catch { catalog = []; }
 }
 
 let calendar = null;
@@ -163,15 +176,31 @@ function setupCalendar() {
       if (!extend || !sel.from) { sel.from = date; sel.to = date; } else if (date < sel.from) sel.from = date; else sel.to = date;
       renderSel();
     },
-    onOpenDay: (date, entries) => openDayPanel({
-      dialog: $('dayPanel'),
-      date,
-      entries,
-      tasks,
-      limit: dailyLimit(),
-      onSaved: () => { calendar.reload(); },
-      onUsePeriod: (d) => location.assign(apontarUrl(d, d)),
-    }),
+    onOpenDay: (date, entries) => openDay(date, entries),
+  });
+}
+
+// Cada abertura do painel ganha um número: um novo apontamento que termina depois de o painel ser
+// fechado ou trocado de dia não reabre o dia antigo por cima.
+let panelSeq = 0;
+function openDay(date, entries, notice = '') {
+  const seq = ++panelSeq;
+  openDayPanel({
+    dialog: $('dayPanel'),
+    date,
+    entries,
+    tasks,
+    epics,
+    catalog,
+    limit: dailyLimit(),
+    notice,
+    onSaved: () => { calendar.reload(); },
+    onUsePeriod: (d) => location.assign(apontarUrl(d, d)),
+    // Novo apontamento: recarrega calendário e tarefas; com a batida gravada, reabre o painel do dia.
+    onCreated: async ({ reopen, notice: text } = {}) => {
+      await Promise.all([calendar.reload(), loadTasks()]);
+      if (reopen && seq === panelSeq && $('dayPanel').open) openDay(date, calendar.entriesOf(date), text);
+    },
   });
 }
 
@@ -185,7 +214,7 @@ async function init() {
   setupCalendar();
   $('selGo').addEventListener('click', () => { if (sel.from) location.assign(apontarUrl(sel.from, sel.to)); });
   $('selClear').addEventListener('click', () => { sel.from = ''; sel.to = ''; renderSel(); calendar.render(); });
-  if (config.tokenConfigured) await Promise.all([loadTasks(), calendar.load()]);
+  if (config.tokenConfigured) await Promise.all([loadTasks(), loadCatalog(), calendar.load()]);
 }
 
 init();

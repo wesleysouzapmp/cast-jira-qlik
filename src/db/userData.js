@@ -50,6 +50,18 @@ export function favoritesFor(db, userId) {
   };
 }
 
+// ---------- espaço padrão para novos épicos ----------
+// Id do projeto do Jira escolhido na última criação de épico (só gravado quando o épico foi criado).
+export function epicSpaceFor(db, userId) {
+  return {
+    get() { return db.prepare('SELECT epic_project_id AS p FROM user_settings WHERE user_id = ?').get(userId)?.p ?? null; },
+    set(projectId) {
+      db.prepare('INSERT INTO user_settings (user_id, epic_project_id) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET epic_project_id = excluded.epic_project_id')
+        .run(userId, String(projectId));
+    },
+  };
+}
+
 // ---------- regras ----------
 function readRulesSync(db, userId) {
   const paused = Boolean(db.prepare('SELECT auto_paused AS p FROM user_settings WHERE user_id = ?').get(userId)?.p);

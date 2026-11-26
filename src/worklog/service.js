@@ -88,11 +88,34 @@ export function createWorklogService({ client, baseUrl, supportService, ai, rng 
         });
       }
     }
+    // Criadas por este processo e que a busca ainda não mostra (atraso do índice).
+    for (const e of epics) {
+      for (const t of supportService.recentTasks?.(e.key) ?? []) {
+        if (e.tasks.some((x) => x.key === t.key)) continue;
+        const model = t.info.model ?? GENERIC_MODEL.id;
+        e.tasks.push({ key: t.key, model, cat: t.info.cat, label: MODEL_LABEL[model] ?? (t.info.catLabel || t.info.cat), summary: t.info.summary ?? '', status: t.info.status ?? '', url: browse(t.key), timeSpentMin: 0 });
+      }
+    }
     const rank = (t) => ({ ...t, model: MODEL_LABEL[t.model] ? t.model : null });
     for (const e of epics) e.tasks.sort((a, b) => byTaskOrder(rank(a), rank(b)));
     const tasks = new Map();
     epics.forEach((e, ei) => e.tasks.forEach((t, ti) => tasks.set(t.key, { ...t, epic: e, order: ei * 1000 + ti })));
-    return { epics, tasks };
+    // Tarefas de apoio soltas (sem épico) atribuídas ao usuário: o app não mexe no status delas.
+    // Melhor esforço: falha nessa busca não pode derrubar lista, prévia, envio, lote nem agendamentos.
+    let looseRaw = [];
+    try {
+      looseRaw = (await supportService.listLoose?.()) ?? [];
+    } catch (err) {
+      console.error('[tarefas soltas]', err?.message);
+    }
+    const loose = looseRaw
+      .filter((t) => !tasks.has(t.key))
+      .map((t) => ({
+        key: t.key, model: t.model ?? GENERIC_MODEL.id, cat: t.cat, label: MODEL_LABEL[t.model] ?? (t.catLabel || t.cat),
+        summary: t.summary, status: t.status, url: t.url, timeSpentMin: t.timeSpentMin ?? 0,
+      }));
+    loose.forEach((t, i) => tasks.set(t.key, { ...t, loose: true, epic: null, order: 1e8 + i }));
+    return { epics, loose, tasks };
   }
 
   // Tarefas avulsas: qualquer issue que o token enxergue, exceto épicos. Lidas direto no Jira.
@@ -143,8 +166,8 @@ export function createWorklogService({ client, baseUrl, supportService, ai, rng 
   }
 
   async function listTasks() {
-    const { epics } = await loadScope();
-    return { epics, aiEnabled: Boolean(ai?.enabled) };
+    const { epics, loose } = await loadScope();
+    return { epics, loose, aiEnabled: Boolean(ai?.enabled) };
   }
 
   // Apontamentos do usuário no período, como intervalos no fuso -03:00.

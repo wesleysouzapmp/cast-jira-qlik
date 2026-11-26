@@ -403,6 +403,17 @@ input.comment { width: 100%; min-width: 260px; }
 .dp-table tr.dp-del td { text-decoration: line-through; opacity: .6; }
 .dp-table .ok { color: var(--ok); font-weight: 500; }
 .dp-table .bad { color: var(--err); }
+/* Novo apontamento no painel do dia */
+.dp-new { border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; margin-bottom: 12px; background: var(--panel); }
+.dp-new h3 { margin: 0 0 8px; font-size: 15px; }
+.dp-new-kind { margin-bottom: 8px; }
+.dp-new-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px 12px; margin-bottom: 10px; }
+.dp-new-grid .wide { grid-column: span 2; }
+.dp-new-grid select, .dp-new-grid input:not([type=radio]) { width: 100%; }
+.dp-new-steps { margin: 4px 0 12px 20px; padding: 0; line-height: 22px; }
+.dp-new-warn { padding: 10px 14px; border-radius: 10px; background: var(--over-bg); color: var(--warn); margin: 0 0 10px; }
+.dp-new .ok { color: var(--ok); font-weight: 500; }
+.dp-new .bad { color: var(--err); }
 
 /* ---- Minha conta e Usuários ---- */
 /* Minha conta e Usuários: blocos em colunas lado a lado; os que têm tabela usam a linha inteira. */
@@ -538,6 +549,8 @@ table.small { display: block; max-width: 100%; overflow-x: auto; }
   .cat-card { padding: 14px; gap: 12px; }
   .cat-sizes { grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .day-panel { width: calc(100vw - 16px); padding: 12px; }
+  .dp-new-grid { grid-template-columns: 1fr; }
+  .dp-new-grid .wide { grid-column: auto; }
   input.comment { min-width: 180px; }
   #periodPanel .grid-fields { grid-template-columns: minmax(0, 1fr); }
   .grid-fields { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }

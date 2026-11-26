@@ -5,6 +5,8 @@ import { paginate } from './paginators.js';
 import { JiraError } from './support/service.js';
 import { validateTemplate, validateTask } from './support/templates.js';
 import { createTemplateRepo, SYSTEM_TEMPLATE_ID } from './db/templates.js';
+import { epicSpaceFor } from './db/userData.js';
+import { runQuick } from './support/quick.js';
 import { ConflictError, ScopeError } from './worklog/service.js';
 import { AiError } from './worklog/ai.js';
 import { registerAuth } from './web/auth.js';
@@ -146,7 +148,7 @@ function makeGuard({ jira = true } = {}) {
 // Rotas das "Tarefas de apoio" e dos modelos de tarefas.
 // Modelos: criar/editar/excluir exige "pode criar" (admin ou chave ligada pelo admin) e ser o dono
 // ou o admin; o modelo do sistema (sem dono) só o admin. Privado de outra pessoa: 404.
-function registerSupportRoutes(app, { audit, catalog, templates, users }) {
+function registerSupportRoutes(app, { audit, catalog, templates, users, db }) {
   const handle = makeGuard();
   const local = makeGuard({ jira: false });
   const catalogItems = () => catalog?.get().items ?? [];
@@ -240,6 +242,74 @@ function registerSupportRoutes(app, { audit, catalog, templates, users }) {
     });
     return out;
   }));
+
+  // Espaços (projetos do Jira) onde a pessoa pode criar épico; defaultId = o último usado, se ainda vale.
+  app.get('/api/support/spaces', handle(async (req, ctx) => {
+    const spaces = await ctx.supportService.listSpaces();
+    const saved = db ? epicSpaceFor(db, req.user.id).get() : null;
+    return { spaces: spaces.map(({ id, key, name }) => ({ id, key, name })), defaultId: spaces.some((s) => s.id === saved) ? saved : null };
+  }));
+
+  // Novo apontamento pelo painel do dia: épico (existente, novo ou nenhum) → tarefa (existente ou
+  // nova) → apontamento. Resposta por passo; o espaço vira o padrão só quando o épico é criado.
+  app.post('/api/support/quick', handle(async (req, ctx) => {
+    const input = parseQuick(req.body, catalogItems());
+    const out = await runQuick(ctx, input);
+    if (input.epic?.new && out.epic?.status === 'created' && db) {
+      try { epicSpaceFor(db, req.user.id).set(input.epic.new.projectId); } catch (err) { console.error('[espaço padrão]', err?.message); }
+    }
+    auditWeb(audit, req, 'support.quick', {
+      epic: out.epic?.key ?? null, epicCreated: out.epic?.status === 'created', projectId: input.epic?.new?.projectId ?? null,
+      task: out.task?.key ?? null, taskCreated: out.task?.status === 'created', cat: input.task.cat ?? null, size: input.task.size ?? null,
+      date: input.worklog.date, start: input.worklog.start, minutes: input.worklog.minutes,
+      status: { epic: out.epic?.status ?? null, task: out.task?.status ?? null, worklog: out.worklog?.status ?? null },
+    });
+    return out;
+  }));
+}
+
+// Corpo de /api/support/quick (ver src/support/quick.js). CAT e tamanho no catálogo de UST, limites
+// de texto da Parte 1 e as regras de horário de /api/worklog/submit.
+const PROJECT_ID_RE = /^\d{1,18}$/;
+const EPIC_SUMMARY_MAX = 255;
+function parseQuick(body, catalogItems) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new BadRequest('Envie o novo apontamento.');
+  const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  let epic = null;
+  if (body.epic !== undefined && body.epic !== null) {
+    if (!isObj(body.epic)) throw new BadRequest('Épico inválido: informe { key }, { new } ou null.');
+    if (body.epic.key !== undefined) {
+      if (typeof body.epic.key !== 'string' || !KEY_RE.test(body.epic.key)) throw new BadRequest('Chave do épico inválida.');
+      epic = { key: body.epic.key };
+    } else if (isObj(body.epic.new)) {
+      const { projectId, summary } = body.epic.new;
+      if (typeof projectId !== 'string' || !PROJECT_ID_RE.test(projectId)) throw new BadRequest('Espaço do novo épico inválido.');
+      const text = typeof summary === 'string' ? summary.trim() : '';
+      if (!text) throw new BadRequest('Informe o resumo do épico.');
+      if (text.length > EPIC_SUMMARY_MAX) throw new BadRequest(`Resumo do épico com até ${EPIC_SUMMARY_MAX} caracteres.`);
+      epic = { new: { projectId, summary: text } };
+    } else throw new BadRequest('Épico inválido: informe { key }, { new } ou null.');
+  }
+  const t = body.task;
+  if (!isObj(t)) throw new BadRequest('Informe a tarefa (existente ou nova).');
+  let task;
+  if (t.key !== undefined) {
+    if (typeof t.key !== 'string' || !KEY_RE.test(t.key)) throw new BadRequest('Chave da tarefa inválida.');
+    if (epic) throw new BadRequest('Tarefa existente já tem pai: não informe épico.');
+    task = { key: t.key };
+  } else {
+    try {
+      task = validateTask(t, catalogItems, 'Nova tarefa');
+    } catch (err) {
+      if (err instanceof RangeError) throw new BadRequest(err.message);
+      throw err;
+    }
+    if (!epic && (task.summary.includes('{EPICO}') || task.description.includes('{EPICO}'))) {
+      throw new BadRequest('Tarefa sem épico: tire o {EPICO} do título e da descrição.');
+    }
+  }
+  if (!isObj(body.worklog)) throw new BadRequest('Informe o apontamento (data, início e duração).');
+  return { epic, task, worklog: parseSlot(body.worklog, 'Apontamento') };
 }
 
 // ---- Apontamento de horas: validação de entrada ----
@@ -303,19 +373,24 @@ function parsePreview(body = {}) {
   };
 }
 
+// Horário de um lançamento: { date, start, minutes, comment } (regras de /api/worklog/submit).
+function parseSlot(e, where) {
+  const date = checkDate(e.date, `${where}: data`);
+  const start = checkHhmm(e.start, `${where}: horário`);
+  if (toMin(start) % 15) throw new BadRequest(`${where}: horário deve ser múltiplo de 15 min.`);
+  if (!isInt(e.minutes) || e.minutes < 15 || e.minutes > 480 || e.minutes % 15) throw new BadRequest(`${where}: duração inválida (15 a 480 min, blocos de 15).`);
+  if (toMin(start) + e.minutes > 1440) throw new BadRequest(`${where}: passa da meia-noite.`);
+  const comment = e.comment ?? '';
+  if (typeof comment !== 'string' || comment.length > 1000) throw new BadRequest(`${where}: comentário com até 1000 caracteres.`);
+  return { date, start, minutes: e.minutes, comment };
+}
+
 function parseEntries(entries) {
   if (!Array.isArray(entries) || entries.length === 0 || entries.length > MAX_ENTRIES) throw new BadRequest(`Envie de 1 a ${MAX_ENTRIES} lançamentos.`);
   return entries.map((e, n) => {
     const where = `Lançamento ${n + 1}`;
     if (typeof e?.taskKey !== 'string' || !KEY_RE.test(e.taskKey)) throw new BadRequest(`${where}: chave de tarefa inválida.`);
-    const date = checkDate(e.date, `${where}: data`);
-    const start = checkHhmm(e.start, `${where}: horário`);
-    if (toMin(start) % 15) throw new BadRequest(`${where}: horário deve ser múltiplo de 15 min.`);
-    if (!isInt(e.minutes) || e.minutes < 15 || e.minutes > 480 || e.minutes % 15) throw new BadRequest(`${where}: duração inválida (15 a 480 min, blocos de 15).`);
-    if (toMin(start) + e.minutes > 1440) throw new BadRequest(`${where}: passa da meia-noite.`);
-    const comment = e.comment ?? '';
-    if (typeof comment !== 'string' || comment.length > 1000) throw new BadRequest(`${where}: comentário com até 1000 caracteres.`);
-    return { taskKey: e.taskKey, date, start, minutes: e.minutes, comment };
+    return { taskKey: e.taskKey, ...parseSlot(e, where) };
   });
 }
 
@@ -604,7 +679,7 @@ export function createApp({
     return { request, ...result };
   }));
 
-  registerSupportRoutes(app, { audit, catalog, templates, users });
+  registerSupportRoutes(app, { audit, catalog, templates, users, db });
   registerWorklogRoutes(app, { audit, catalog });
   if (autoRunner) registerAutoRoutes(app, { autoRunner, audit });
   if (holidayProvider) {
