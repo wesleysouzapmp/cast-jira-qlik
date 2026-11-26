@@ -1,4 +1,11 @@
-*.sh text eol=lf
-*.service text eol=lf
-*.timer text eol=lf
-*.tmpl text eol=lf
+# Todo arquivo de texto fica com LF, no repositório e na pasta de trabalho (Windows inclusive).
+* text=auto eol=lf
+
+# Binários: o git não mexe.
+*.woff2 binary
+*.woff binary
+*.png binary
+*.jpg binary
+*.ico binary
+*.xlsx binary
+*.zip binary
