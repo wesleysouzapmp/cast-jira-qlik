@@ -167,11 +167,14 @@ export function createUstCalculator({ client, baseUrl, myWorklogs }) {
         ...(d.problem ? { problem: d.problem } : {}),
       };
     });
-    return { from, to, sizeField: field.name, tasks };
+    const cats = [...new Set(catalog.map((i) => i.cat))]
+      .sort((a, b) => Number(a.slice(4)) - Number(b.slice(4)))
+      .map((cat) => ({ cat, task: catalog.find((i) => i.cat === cat)?.task ?? '', options: optionsFor(catalog, cat) }));
+    return { from, to, sizeField: field.name, tasks, cats };
   }
 
-  // Grava o Tamanho escolhido em cada tarefa (uma por vez). Valida CAT + tamanho no catálogo e
-  // usa a opção que o Jira oferece para o campo nessa tarefa (editmeta). Resultado por tarefa.
+  // Grava o Tamanho (e, se pedido, o Item do Catálogo) escolhidos em cada tarefa, uma por vez.
+  // Valida CAT + tamanho no catálogo e usa as opções que o Jira oferece nessa tarefa (editmeta).
   let queue = Promise.resolve();
   let myAccountId = null;
 
@@ -186,6 +189,19 @@ export function createUstCalculator({ client, baseUrl, myWorklogs }) {
     if (close.length === 1) return { opt: close[0] };
     if (!close.length) return { error: `O Jira não oferece o valor ${size} no campo Tamanho desta tarefa.` };
     return { error: `O campo Tamanho tem mais de uma opção para ${size} (${close.map(label).join(', ')}); ajuste no Jira.` };
+  }
+
+  // Opção do Item do Catálogo (cascata pai › filho) cujo filho tem o código CAT pedido; ignora desativadas.
+  function pickCatOption(allowed, cat) {
+    const found = [];
+    for (const parent of allowed.filter((o) => o?.disabled !== true)) {
+      for (const child of (parent.children ?? []).filter((c) => c?.disabled !== true)) {
+        if (catOf(child.value ?? child.name) === cat) found.push({ parent, child });
+      }
+    }
+    if (found.length === 1) return { value: { id: String(found[0].parent.id), child: { id: String(found[0].child.id) } } };
+    if (!found.length) return { error: `O Jira não oferece o ${cat} no Item do Catálogo desta tarefa.` };
+    return { error: `O Item do Catálogo tem mais de uma opção para ${cat} (${found.map((f) => `${f.parent.value} › ${f.child.value}`).join('; ')}); ajuste no Jira.` };
   }
 
   function changeSizes(args) {
@@ -206,28 +222,49 @@ export function createUstCalculator({ client, baseUrl, myWorklogs }) {
       for (const issue of data.issues ?? []) found.set(issue.key, issue);
     }
     const results = [];
-    for (const { key, size, from } of changes) {
+    // cat (opcional): novo CAT; fromCat/from: CAT e tamanho que a pessoa viu na tela ('' = vazio).
+    for (const { key, size, from, cat: newCat, fromCat } of changes) {
       const issue = found.get(key);
-      if (!issue) { results.push({ key, status: 'error', to: size, error: 'Tarefa não encontrada ou sem acesso.' }); continue; }
+      if (!issue) { results.push({ key, status: 'error', to: size, ...(newCat ? { toCat: newCat } : {}), error: 'Tarefa não encontrada ou sem acesso.' }); continue; }
       const d = describeTask(issue, field, catalog);
-      const base = { key, from: d.size, to: size, ustBefore: d.ust };
+      const toCat = newCat ?? d.cat;
+      const base = { key, fromCat: d.cat, toCat, from: d.size, to: size, ustBefore: d.ust };
       if (issue.fields?.assignee?.accountId !== myAccountId) { results.push({ ...base, status: 'error', error: 'A tarefa não está atribuída a você.' }); continue; }
-      // from: o tamanho que a pessoa viu na tela ('' = sem tamanho). Mudou no Jira desde então: não grava.
+      // Mudou no Jira desde que a tela carregou: não grava.
+      if (fromCat !== undefined && (d.cat ?? '') !== fromCat) {
+        results.push({ ...base, status: 'conflict', error: `O CAT mudou para ${d.cat ?? 'vazio'} no Jira desde que a tela carregou; clique em Carregar e revise.` });
+        continue;
+      }
       if (from !== undefined && (d.size ?? '') !== from) {
         results.push({ ...base, status: 'conflict', error: `O tamanho mudou para ${d.size ?? 'vazio'} no Jira desde que a tela carregou; clique em Carregar e revise.` });
         continue;
       }
-      const target = d.options.find((o) => o.size === size);
-      if (!d.cat) { results.push({ ...base, status: 'error', error: 'Tarefa sem código CAT no Item do Catálogo.' }); continue; }
-      if (!target) { results.push({ ...base, status: 'error', error: `${d.cat} não tem tamanho ${size} no catálogo de UST.` }); continue; }
-      if (d.size === size) { results.push({ ...base, status: 'unchanged', ustAfter: target.ust }); continue; }
+      if (!toCat) { results.push({ ...base, status: 'error', error: 'Tarefa sem código CAT no Item do Catálogo.' }); continue; }
+      const targetOptions = optionsFor(catalog, toCat);
+      if (!targetOptions.length) { results.push({ ...base, status: 'error', error: `${toCat} não está no catálogo de UST.` }); continue; }
+      const target = targetOptions.find((o) => o.size === size);
+      if (!target) { results.push({ ...base, status: 'error', error: `${toCat} não tem tamanho ${size} no catálogo de UST.` }); continue; }
+      const catChanges = toCat !== d.cat;
+      const sizeChanges = size !== d.size;
+      if (!catChanges && !sizeChanges) { results.push({ ...base, status: 'unchanged', ustAfter: target.ust }); continue; }
       try {
         const meta = await call({ method: 'GET', path: `/rest/api/3/issue/${key}/editmeta` }, `Campos editáveis de ${key}`);
-        const allowed = meta?.fields?.[field.id]?.allowedValues;
-        if (!allowed) { results.push({ ...base, status: 'error', error: `O campo ${field.name} não pode ser editado nesta tarefa (permissão ou status).` }); continue; }
-        const { opt, error } = pickOption(allowed, size);
-        if (!opt) { results.push({ ...base, status: 'error', error }); continue; }
-        const res = await client.call({ method: 'PUT', path: `/rest/api/3/issue/${key}`, body: { fields: { [field.id]: { id: String(opt.id) } } } });
+        const fields = {};
+        if (catChanges) {
+          const allowedCat = meta?.fields?.[catField]?.allowedValues;
+          if (!allowedCat) { results.push({ ...base, status: 'error', error: 'O Item do Catálogo não pode ser editado nesta tarefa (permissão ou status).' }); continue; }
+          const { value, error } = pickCatOption(allowedCat, toCat);
+          if (!value) { results.push({ ...base, status: 'error', error }); continue; }
+          fields[catField] = value;
+        }
+        if (sizeChanges) {
+          const allowed = meta?.fields?.[field.id]?.allowedValues;
+          if (!allowed) { results.push({ ...base, status: 'error', error: `O campo ${field.name} não pode ser editado nesta tarefa (permissão ou status).` }); continue; }
+          const { opt, error } = pickOption(allowed, size);
+          if (!opt) { results.push({ ...base, status: 'error', error }); continue; }
+          fields[field.id] = { id: String(opt.id) };
+        }
+        const res = await client.call({ method: 'PUT', path: `/rest/api/3/issue/${key}`, body: { fields } });
         if (!res.ok) { results.push({ ...base, status: 'error', error: `HTTP ${res.status} ${jiraMessage(res.data)}`.trim() }); continue; }
         results.push({ ...base, status: 'updated', ustAfter: target.ust });
       } catch (err) {

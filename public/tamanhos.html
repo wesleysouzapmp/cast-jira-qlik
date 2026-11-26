@@ -31,14 +31,16 @@
       </div>
       <div id="errorBox" class="error" hidden></div>
       <div class="actions">
-        <label class="inline">Aplicar às marcadas <select id="bulkSize"><option value="P">P</option><option value="M">M</option><option value="G">G</option></select></label>
+        <label class="inline">Aplicar às marcadas: CAT <select id="bulkCat" class="cat-select"><option value="">manter o CAT</option></select></label>
+        <label class="inline">tamanho <select id="bulkSize"><option value="">manter</option><option value="P">P</option><option value="M">M</option><option value="G">G</option><option value="Hora">Hora</option></select></label>
         <button id="btnBulk">Aplicar</button>
         <button id="btnReview" class="primary" disabled>Revisar troca (0)</button>
         <span id="bulkMsg" class="muted"></span>
+        <span id="pendingMsg" class="bad"></span>
       </div>
       <div class="table-wrap">
         <table class="items" id="table">
-          <thead><tr><th><input type="checkbox" id="selectAll" aria-label="Marcar todas"></th><th>Tarefa</th><th>Status</th><th>CAT</th><th>Horas</th><th>Tamanho atual</th><th>Novo tamanho</th><th>Alerta</th><th>Resultado</th></tr></thead>
+          <thead><tr><th><input type="checkbox" id="selectAll" aria-label="Marcar todas"></th><th>Tarefa</th><th>Status</th><th>CAT</th><th>Horas</th><th>Atual</th><th>Novo tamanho</th><th>Alerta</th><th>Resultado</th></tr></thead>
           <tbody id="rows"><tr><td colspan="9" class="muted">Escolha o período e clique em Carregar.</td></tr></tbody>
         </table>
       </div>
@@ -46,7 +48,7 @@
   </main>
 
   <dialog id="reviewDialog">
-    <h2>Confirmar troca de tamanho no Jira</h2>
+    <h2>Confirmar troca de CAT e tamanho no Jira</h2>
     <div id="reviewBody"></div>
     <div class="actions">
       <span class="spacer"></span>

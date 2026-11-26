@@ -271,6 +271,7 @@ function registerWorklogRoutes(app, { audit, catalog }) {
 
   // Tamanhos e UST: análise das tarefas e troca do campo Tamanho em lote (escolha do usuário).
   const MAX_SIZE_CHANGES = 50;
+  const CAT_KEY_RE = /^CAT-\d{1,6}$/i;
   app.get('/api/worklog/tamanhos', handle((req, ctx) => {
     const from = checkDate(req.query.from, 'Data inicial');
     const to = checkDate(req.query.to, 'Data final');
@@ -288,13 +289,24 @@ function registerWorklogRoutes(app, { audit, catalog }) {
       if (!size) throw new BadRequest(`Tamanho inválido para ${c.key} (use P, M, G ou Hora).`);
       if (seen.has(c.key)) throw new BadRequest(`${c.key} aparece mais de uma vez.`);
       seen.add(c.key);
-      // from (opcional): tamanho que a pessoa viu na tela; '' = sem tamanho.
-      if (c.from === undefined) return { key: c.key, size };
-      if (c.from !== '' && !SIZES.includes(c.from)) throw new BadRequest(`Tamanho anterior inválido para ${c.key}.`);
-      return { key: c.key, size, from: c.from };
+      const out = { key: c.key, size };
+      // from/fromCat (opcionais): tamanho e CAT que a pessoa viu na tela; '' = vazio. cat: novo CAT.
+      if (c.from !== undefined) {
+        if (c.from !== '' && !SIZES.includes(c.from)) throw new BadRequest(`Tamanho anterior inválido para ${c.key}.`);
+        out.from = c.from;
+      }
+      if (c.cat !== undefined) {
+        if (typeof c.cat !== 'string' || !CAT_KEY_RE.test(c.cat)) throw new BadRequest(`CAT inválido para ${c.key} (use CAT-123).`);
+        out.cat = c.cat.toUpperCase();
+      }
+      if (c.fromCat !== undefined) {
+        if (typeof c.fromCat !== 'string' || (c.fromCat !== '' && !CAT_KEY_RE.test(c.fromCat))) throw new BadRequest(`CAT anterior inválido para ${c.key}.`);
+        out.fromCat = c.fromCat.toUpperCase();
+      }
+      return out;
     });
     const out = await ctx.worklogService.changeSizes({ changes, catalog: catalog?.get().items ?? [] });
-    auditWeb(audit, req, 'ust.tamanho', { changes: out.results.map((r) => ({ key: r.key, from: r.from ?? null, size: r.to, status: r.status })) });
+    auditWeb(audit, req, 'ust.tamanho', { changes: out.results.map((r) => ({ key: r.key, fromCat: r.fromCat ?? null, cat: r.toCat ?? null, from: r.from ?? null, size: r.to, status: r.status })) });
     return out;
   }));
 

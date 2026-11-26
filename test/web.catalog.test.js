@@ -68,13 +68,13 @@ test('tamanhos: GET repassa período, concluídas e catálogo; POST valida e aud
   assert.deepEqual([calls[0][1].from, calls[0][1].to, calls[0][1].catalog.length], ['2026-10-21', '2026-11-20', 2]);
   await t.json('GET', '/api/worklog/tamanhos?from=2026-10-21&to=2026-11-21');
 
-  const res = await t.json('POST', '/api/worklog/tamanhos', { changes: [{ key: 'QSENSE-1', size: 'M', from: 'P' }, { key: 'QSENSE-2', size: 'g', from: '' }] });
+  const res = await t.json('POST', '/api/worklog/tamanhos', { changes: [{ key: 'QSENSE-1', size: 'M', from: 'P' }, { key: 'QSENSE-2', size: 'g', from: '', cat: 'cat-106', fromCat: 'CAT-105' }] });
   assert.equal(res.status, 200);
-  assert.deepEqual(calls[2][1].changes, [{ key: 'QSENSE-1', size: 'M', from: 'P' }, { key: 'QSENSE-2', size: 'G', from: '' }]);
+  assert.deepEqual(calls[2][1].changes, [{ key: 'QSENSE-1', size: 'M', from: 'P' }, { key: 'QSENSE-2', size: 'G', from: '', cat: 'CAT-106', fromCat: 'CAT-105' }]);
   const log = t.audit.list(t.user.id).find((x) => x.action === 'ust.tamanho');
-  assert.deepEqual(log.detail, { changes: [{ key: 'QSENSE-1', from: 'P', size: 'M', status: 'updated' }, { key: 'QSENSE-2', from: 'P', size: 'G', status: 'updated' }] });
+  assert.deepEqual(log.detail, { changes: [{ key: 'QSENSE-1', fromCat: null, cat: null, from: 'P', size: 'M', status: 'updated' }, { key: 'QSENSE-2', fromCat: null, cat: null, from: 'P', size: 'G', status: 'updated' }] });
 
-  for (const changes of [[], 'x', [{ key: 'qsense-1', size: 'M' }], [{ key: 'QSENSE-1', size: 'XG' }], [{ key: 'QSENSE-1', size: 'M' }, { key: 'QSENSE-1', size: 'G' }], [{ key: 'QSENSE-1', size: 'M', from: 'XG' }], Array.from({ length: 51 }, (_, i) => ({ key: `Q-${i + 1}`, size: 'P' }))]) {
+  for (const changes of [[], 'x', [{ key: 'qsense-1', size: 'M' }], [{ key: 'QSENSE-1', size: 'XG' }], [{ key: 'QSENSE-1', size: 'M' }, { key: 'QSENSE-1', size: 'G' }], [{ key: 'QSENSE-1', size: 'M', from: 'XG' }], [{ key: 'QSENSE-1', size: 'M', cat: 'BI-1' }], [{ key: 'QSENSE-1', size: 'M', cat: 'CAT-1', fromCat: 'x' }], Array.from({ length: 51 }, (_, i) => ({ key: `Q-${i + 1}`, size: 'P' }))]) {
     assert.equal((await t.json('POST', '/api/worklog/tamanhos', { changes })).status, 400, JSON.stringify(changes).slice(0, 60));
   }
   assert.equal(calls.length, 3);

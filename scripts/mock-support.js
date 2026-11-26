@@ -55,6 +55,10 @@ const task = (key, parent, model, status, size) => ({
     ...(size ? { customfield_10300: { value: size } } : {}),
   },
 });
+const CAT_OPTIONS = [{ id: '11927', value: 'Business Intelligence', children: [
+  { id: '11930', value: 'CAT-105 - Realizar diagnóstico de incidente, problema, erro ou demanda na solução de BI' },
+  { id: '12117', value: 'CAT-166 - Manter script de carga do Qlik Sense' },
+] }];
 const SIZE_OPTIONS = [{ id: '701', value: 'P' }, { id: '702', value: 'M' }, { id: '703', value: 'G' }, { id: '704', value: 'Hora' }];
 const FIELDS = [{ id: 'summary', name: 'Resumo', custom: false }, { id: 'customfield_10104', name: 'Item do Catálogo', custom: true }, { id: 'customfield_10300', name: 'Tamanho', custom: true }];
 const sijud = (key, summary) => ({ key, fields: { summary, issuetype: { name: 'Tarefa', hierarchyLevel: 0 }, status: { name: 'Em Execução' }, project: { key: 'SIJUD' }, timespent: 0 } });
@@ -158,14 +162,23 @@ function createMockJira({ me, displayName, issues: list, worklogs, nextIssue = 5
         const i = issues.get(em[1]);
         if (!i) return { status: 404, ok: false, data: { errorMessages: ['Tarefa não encontrada'] } };
         // Tarefa concluída: o fluxo não deixa editar o Tamanho (para ver o erro na tela).
-        return ok({ fields: done(i) ? {} : { customfield_10300: { allowedValues: SIZE_OPTIONS } } });
+        return ok({ fields: done(i) ? {} : { customfield_10300: { allowedValues: SIZE_OPTIONS }, customfield_10104: { allowedValues: CAT_OPTIONS } } });
       }
       if ((em = path.match(/^\/rest\/api\/3\/issue\/([^/]+)$/)) && method === 'PUT') {
         await sleep(300);
         const i = issues.get(em[1]);
-        const opt = SIZE_OPTIONS.find((o) => o.id === body.fields?.customfield_10300?.id);
-        if (!i || !opt) return { status: 400, ok: false, data: { errorMessages: ['Valor inválido (simulado)'] } };
-        i.fields.customfield_10300 = { value: opt.value };
+        if (!i) return { status: 404, ok: false, data: { errorMessages: ['Tarefa não encontrada'] } };
+        if (body.fields?.customfield_10300) {
+          const opt = SIZE_OPTIONS.find((o) => o.id === body.fields.customfield_10300.id);
+          if (!opt) return { status: 400, ok: false, data: { errorMessages: ['Valor inválido (simulado)'] } };
+          i.fields.customfield_10300 = { value: opt.value };
+        }
+        if (body.fields?.customfield_10104) {
+          const parent = CAT_OPTIONS.find((o) => o.id === body.fields.customfield_10104.id);
+          const child = parent?.children.find((c) => c.id === body.fields.customfield_10104.child?.id);
+          if (!child) return { status: 400, ok: false, data: { errorMessages: ['Item do Catálogo inválido (simulado)'] } };
+          i.fields.customfield_10104 = { id: parent.id, value: parent.value, child: { id: child.id, value: child.value } };
+        }
         return { status: 204, ok: true, data: '' };
       }
       if (path === '/rest/api/3/issue/bulkfetch') return ok({ issues: body.issueIdsOrKeys.map((k) => issues.get(k)).filter(Boolean), issueErrors: [] });
