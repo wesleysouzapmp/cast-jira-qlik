@@ -445,5 +445,5 @@ export function createWorklogService({ client, baseUrl, supportService, ai, rng 
   }
 
   const ust = createUstCalculator({ client, baseUrl, myWorklogs: (from, to) => myWorklogs(from, to) });
-  return { aiEnabled: Boolean(ai?.enabled), listTasks, describe, myWorklogs, busy, preview, aiComments, submit, batch, autoLog, findBySummary, ustSummary: ust.summary };
+  return { aiEnabled: Boolean(ai?.enabled), listTasks, describe, myWorklogs, busy, preview, aiComments, submit, batch, autoLog, findBySummary, ustSummary: ust.summary, sizeAnalysis: ust.sizeAnalysis, changeSizes: ust.changeSizes };
 }

@@ -257,4 +257,6 @@ label.inline { display: inline-flex; align-items: center; gap: 6px; }
 .table-wrap { overflow-x: auto; max-height: 70vh; }
 #table input:not(.short) { width: 100%; min-width: 180px; }
 #table input.invalid { border-color: var(--err); }
+.badge.warn { border-color: var(--warn); color: var(--warn); }
+#table select { max-width: 340px; }
 .kpis.ust .kpi strong { font-variant-numeric: tabular-nums; }

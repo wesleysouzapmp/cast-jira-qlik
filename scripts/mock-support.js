@@ -18,6 +18,7 @@ import { createSessionRepo } from '../src/db/sessions.js';
 import { createOAuthRepo } from '../src/db/oauth.js';
 import { createAuditRepo } from '../src/db/audit.js';
 import { favoritesFor } from '../src/db/userData.js';
+import { createCatalogRepo } from '../src/db/catalog.js';
 import { hashPassword } from '../src/auth/passwords.js';
 import { createRateLimiter } from '../src/auth/rateLimit.js';
 import { createContextFactory } from '../src/context.js';
@@ -54,6 +55,7 @@ const task = (key, parent, model, status, size) => ({
     ...(size ? { customfield_10300: { value: size } } : {}),
   },
 });
+const SIZE_OPTIONS = [{ id: '701', value: 'P' }, { id: '702', value: 'M' }, { id: '703', value: 'G' }, { id: '704', value: 'Hora' }];
 const FIELDS = [{ id: 'summary', name: 'Resumo', custom: false }, { id: 'customfield_10104', name: 'Item do Catálogo', custom: true }, { id: 'customfield_10300', name: 'Tamanho', custom: true }];
 const sijud = (key, summary) => ({ key, fields: { summary, issuetype: { name: 'Tarefa', hierarchyLevel: 0 }, status: { name: 'Em Execução' }, project: { key: 'SIJUD' }, timespent: 0 } });
 
@@ -117,7 +119,8 @@ function testeDataset(me) {
 
 // Jira simulado com estado, no formato do jiraClient ({ status, ok, data }).
 function createMockJira({ me, displayName, issues: list, worklogs, nextIssue = 5000 }) {
-  const issues = new Map(list.map((i) => [i.key, i]));
+  // Tudo atribuído ao usuário do mock (a troca de Tamanho só aceita tarefas suas).
+  const issues = new Map(list.map((i) => [i.key, { ...i, fields: { assignee: { accountId: me }, ...i.fields } }]));
   let nextWl = 100;
   const ok = (data, status = 200) => ({ status, ok: true, data });
   const seconds = (ts) => (Number(ts.match(/(\d+)h/)?.[1] ?? 0) * 60 + Number(ts.match(/(\d+)m/)?.[1] ?? 0)) * 60;
@@ -125,13 +128,18 @@ function createMockJira({ me, displayName, issues: list, worklogs, nextIssue = 5
 
   return {
     async call({ method = 'GET', path, query = {}, body }) {
+      const done = (i) => /^conclu/i.test(i.fields.status?.name ?? '');
       if (path === '/rest/api/3/myself') return ok({ accountId: me, displayName });
       if (path === '/rest/api/3/field') return ok(FIELDS);
       if (path === '/rest/api/3/search/jql') {
         const jql = body.jql;
-        const done = (i) => /^conclu/i.test(i.fields.status?.name ?? '');
         let found = [];
-        if (jql.includes('statusCategory = Done')) found = [...issues.values()].filter((i) => done(i) && i.fields.customfield_10104);
+        if (jql.startsWith('assignee = currentUser() AND cf[')) {
+          // Tela Tamanhos e UST: abertas e, se pedido, as concluídas (o mock ignora as datas).
+          const withDone = jql.includes('OR (statusCategory = Done');
+          found = [...issues.values()].filter((i) => i.fields.customfield_10104 && (withDone || !done(i)))
+            .map((i) => ({ ...i, fields: { ...i.fields, timespent: (worklogs[i.key] ?? []).reduce((s, w) => s + w.timeSpentSeconds, 0) } }));
+        } else if (jql.includes('statusCategory = Done')) found = [...issues.values()].filter((i) => done(i) && i.fields.customfield_10104);
         else if (jql.startsWith('assignee')) found = [...issues.values()].filter((i) => i.fields.project?.key === 'BI');
         else if (jql.startsWith('project = QSENSE')) {
           const keys = jql.match(/parent in \(([^)]*)\)/)[1].split(',').map((s) => s.trim());
@@ -145,6 +153,21 @@ function createMockJira({ me, displayName, issues: list, worklogs, nextIssue = 5
           if (jql.includes('statusCategory != Done')) found = found.filter((i) => !done(i) && i.fields.customfield_10104);
         }
         return ok({ issues: found, isLast: true });
+      }
+      let em;
+      if ((em = path.match(/^\/rest\/api\/3\/issue\/([^/]+)\/editmeta$/))) {
+        const i = issues.get(em[1]);
+        if (!i) return { status: 404, ok: false, data: { errorMessages: ['Tarefa não encontrada'] } };
+        // Tarefa concluída: o fluxo não deixa editar o Tamanho (para ver o erro na tela).
+        return ok({ fields: done(i) ? {} : { customfield_10300: { allowedValues: SIZE_OPTIONS } } });
+      }
+      if ((em = path.match(/^\/rest\/api\/3\/issue\/([^/]+)$/)) && method === 'PUT') {
+        await sleep(300);
+        const i = issues.get(em[1]);
+        const opt = SIZE_OPTIONS.find((o) => o.id === body.fields?.customfield_10300?.id);
+        if (!i || !opt) return { status: 400, ok: false, data: { errorMessages: ['Valor inválido (simulado)'] } };
+        i.fields.customfield_10300 = { value: opt.value };
+        return { status: 204, ok: true, data: '' };
       }
       if (path === '/rest/api/3/issue/bulkfetch') return ok({ issues: body.issueIdsOrKeys.map((k) => issues.get(k)).filter(Boolean), issueErrors: [] });
       if (path === '/rest/api/3/issue' && method === 'POST') {
@@ -226,6 +249,13 @@ for (const u of MOCK_USERS) {
   users.setJira(user.id, { email: u.email, token: u.token, accountId: u.me });
   if (u.role === 'admin') await favoritesFor(db, user.id).add('SIJUD-1');
 }
+
+// Catálogo de UST pequeno, para as telas de UST e Tamanhos (dá para reimportar na tela Catálogo).
+createCatalogRepo(db).replaceAll([
+  { cat: 'CAT-105', size: 'P', ust: 0.4, task: 'Realizar diagnóstico', description: 'Revisão da atividade' },
+  { cat: 'CAT-105', size: 'M', ust: 8, task: 'Realizar diagnóstico', description: 'Diagnóstico de Incidente' },
+  { cat: 'CAT-166', size: 'P', ust: 8, task: 'Manter script de carga do Qlik Sense', description: 'Script de carga do Qlik Sense' },
+], null);
 
 const app = createApp({
   config: { baseUrl: BASE },

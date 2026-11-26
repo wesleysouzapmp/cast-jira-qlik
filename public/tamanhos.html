@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tamanhos e UST</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Tamanhos e UST</div>
+    <nav class="pages" aria-label="Páginas">
+      <a href="index.html">API Tester</a>
+      <a href="apoio.html">Tarefas de apoio</a>
+      <a href="apontar.html">Apontar horas</a>
+      <a href="catalogo.html">Catálogo de UST</a>
+      <a href="tamanhos.html" aria-current="page">Tamanhos e UST</a>
+    </nav>
+  </header>
+
+  <main class="page">
+    <section class="panel">
+      <h1>Tamanhos e UST</h1>
+      <p class="help">Suas tarefas com Item do Catálogo, com a UST de cada tamanho do catálogo e as horas apontadas na tarefa. O tamanho deve corresponder ao trabalho entregue, conforme a descrição do catálogo; os alertas só apontam onde vale conferir. <strong>Subavaliação</strong>: as horas ficam mais perto da UST de um tamanho maior. <strong>Acima das horas</strong>: mais perto de um tamanho menor.</p>
+      <div class="actions">
+        <label class="inline">De <input type="date" id="from"></label>
+        <label class="inline">Até <input type="date" id="to"></label>
+        <label class="inline"><input type="checkbox" id="includeDone"> Incluir concluídas no período</label>
+        <label class="inline"><input type="checkbox" id="onlyAlerts"> Só com alerta</label>
+        <button id="btnLoad" class="primary">Carregar</button>
+        <span id="count" class="muted"></span>
+      </div>
+      <div id="errorBox" class="error" hidden></div>
+      <div class="actions">
+        <label class="inline">Aplicar às marcadas <select id="bulkSize"><option value="P">P</option><option value="M">M</option><option value="G">G</option></select></label>
+        <button id="btnBulk">Aplicar</button>
+        <button id="btnReview" class="primary" disabled>Revisar troca (0)</button>
+        <span id="bulkMsg" class="muted"></span>
+      </div>
+      <div class="table-wrap">
+        <table class="items" id="table">
+          <thead><tr><th><input type="checkbox" id="selectAll" aria-label="Marcar todas"></th><th>Tarefa</th><th>Status</th><th>CAT</th><th>Horas</th><th>Tamanho atual</th><th>Novo tamanho</th><th>Alerta</th><th>Resultado</th></tr></thead>
+          <tbody id="rows"><tr><td colspan="9" class="muted">Escolha o período e clique em Carregar.</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="reviewDialog">
+    <h2>Confirmar troca de tamanho no Jira</h2>
+    <div id="reviewBody"></div>
+    <div class="actions">
+      <span class="spacer"></span>
+      <button id="btnCancel">Cancelar</button>
+      <button id="btnConfirm" class="primary">Confirmar e gravar</button>
+    </div>
+  </dialog>
+
+  <script src="session.js"></script>
+  <script type="module" src="tamanhos.js"></script>
+</body>
+</html>

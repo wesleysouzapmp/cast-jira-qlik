@@ -11,6 +11,7 @@ import { registerAccount, defaultValidateAnthropicKey } from './web/account.js';
 import { registerAdmin } from './web/admin.js';
 import { registerCatalog } from './web/catalog.js';
 import { createCatalogRepo } from './db/catalog.js';
+import { SIZES, normSize } from './shared/ustCatalog.js';
 import { createJiraClient } from './jiraClient.js';
 import { createAuditRepo } from './db/audit.js';
 import { createOAuthProvider } from './mcp/oauthProvider.js';
@@ -266,6 +267,35 @@ function registerWorklogRoutes(app, { audit, catalog }) {
     const days = (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000 + 1;
     if (days < 1 || days > 400) throw new BadRequest('Período de UST: de 1 a 400 dias.');
     return ctx.worklogService.ustSummary({ from, to, catalog: catalog?.get().items ?? [] });
+  }));
+
+  // Tamanhos e UST: análise das tarefas e troca do campo Tamanho em lote (escolha do usuário).
+  const MAX_SIZE_CHANGES = 50;
+  app.get('/api/worklog/tamanhos', handle((req, ctx) => {
+    const from = checkDate(req.query.from, 'Data inicial');
+    const to = checkDate(req.query.to, 'Data final');
+    const days = (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000 + 1;
+    if (days < 1 || days > 400) throw new BadRequest('Período: de 1 a 400 dias.');
+    return ctx.worklogService.sizeAnalysis({ from, to, includeDone: req.query.concluidas === '1', catalog: catalog?.get().items ?? [] });
+  }));
+  app.post('/api/worklog/tamanhos', handle(async (req, ctx) => {
+    const list = req.body?.changes;
+    if (!Array.isArray(list) || !list.length || list.length > MAX_SIZE_CHANGES) throw new BadRequest(`Informe de 1 a ${MAX_SIZE_CHANGES} trocas de tamanho.`);
+    const seen = new Set();
+    const changes = list.map((c) => {
+      if (typeof c?.key !== 'string' || !KEY_RE.test(c.key)) throw new BadRequest('Chave de tarefa inválida.');
+      const size = SIZES.includes(c.size) ? c.size : normSize(c.size);
+      if (!size) throw new BadRequest(`Tamanho inválido para ${c.key} (use P, M, G ou Hora).`);
+      if (seen.has(c.key)) throw new BadRequest(`${c.key} aparece mais de uma vez.`);
+      seen.add(c.key);
+      // from (opcional): tamanho que a pessoa viu na tela; '' = sem tamanho.
+      if (c.from === undefined) return { key: c.key, size };
+      if (c.from !== '' && !SIZES.includes(c.from)) throw new BadRequest(`Tamanho anterior inválido para ${c.key}.`);
+      return { key: c.key, size, from: c.from };
+    });
+    const out = await ctx.worklogService.changeSizes({ changes, catalog: catalog?.get().items ?? [] });
+    auditWeb(audit, req, 'ust.tamanho', { changes: out.results.map((r) => ({ key: r.key, from: r.from ?? null, size: r.to, status: r.status })) });
+    return out;
   }));
 
   // Tarefas avulsas: consulta de uma chave e favoritos (favoritos.json).
