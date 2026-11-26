@@ -102,7 +102,7 @@ async function load() {
   state.busy = true;
   update();
   try {
-    const q = new URLSearchParams({ from: $('from').value, to: $('to').value, ...($('includeDone').checked ? { concluidas: '1' } : {}) });
+    const q = new URLSearchParams({ from: $('from').value, to: $('to').value });
     const r = await api(`/api/worklog/tamanhos?${q}`);
     if (r.error) showError(r.error);
     state.tasks = r.tasks ?? [];

@@ -135,9 +135,8 @@ function createMockJira({ me, displayName, issues: list, worklogs, nextIssue = 5
         const jql = body.jql;
         let found = [];
         if (jql.startsWith('assignee = currentUser() AND cf[')) {
-          // Tela Tamanhos e UST: abertas e, se pedido, as concluídas (o mock ignora as datas).
-          const withDone = jql.includes('OR (statusCategory = Done');
-          found = [...issues.values()].filter((i) => i.fields.customfield_10104 && (withDone || !done(i)))
+          // Tela Tamanhos e UST: qualquer status com Item do Catálogo (o mock ignora as datas).
+          found = [...issues.values()].filter((i) => i.fields.customfield_10104)
             .map((i) => ({ ...i, fields: { ...i.fields, timespent: (worklogs[i.key] ?? []).reduce((s, w) => s + w.timeSpentSeconds, 0) } }));
         } else if (jql.includes('statusCategory = Done')) found = [...issues.values()].filter((i) => done(i) && i.fields.customfield_10104);
         else if (jql.startsWith('assignee')) found = [...issues.values()].filter((i) => i.fields.project?.key === 'BI');

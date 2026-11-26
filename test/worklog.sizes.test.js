@@ -59,7 +59,7 @@ test('análise lista tamanhos do CAT com UST e descrição, horas da tarefa e al
     task('Q-3', 'CAT-106', 'M', 3),
     task('Q-4', 'CAT-105', 'M', 0),
   ] });
-  const r = await calc.sizeAnalysis({ from: '2026-10-21', to: '2026-11-20', includeDone: false, catalog: CATALOG });
+  const r = await calc.sizeAnalysis({ from: '2026-10-21', to: '2026-11-20', catalog: CATALOG });
   assert.equal(r.sizeField, 'Tamanho');
   const [q1, q2, q3, q4] = r.tasks;
   assert.deepEqual([q1.key, q1.cat, q1.size, q1.hours, q1.ust], ['Q-1', 'CAT-105', 'P', 7.5, 0.4]);
@@ -69,15 +69,19 @@ test('análise lista tamanhos do CAT com UST e descrição, horas da tarefa e al
   assert.deepEqual(q3.alerts, ['under']);
   assert.deepEqual(q4.alerts, []);
   const jql = calls.find((c) => c.path === '/rest/api/3/search/jql').body.jql;
-  assert.match(jql, /^assignee = currentUser\(\) AND cf\[10104\] is not EMPTY AND statusCategory != Done/);
+  assert.match(jql, /^assignee = currentUser\(\) AND cf\[10104\] is not EMPTY AND \(/);
+  assert.doesNotMatch(jql, /statusCategory (!=|=) Done/);
   assert.ok(calls.find((c) => c.path === '/rest/api/3/search/jql').body.fields.includes('timespent'));
 });
 
-test('análise com concluídas inclui as que fecharam no período', async () => {
+test('análise traz tarefas de qualquer status com movimento no período: horas suas, criação ou mudança de status', async () => {
   const { calc, calls } = fake({ issues: [] });
-  await calc.sizeAnalysis({ from: '2026-10-21', to: '2026-11-20', includeDone: true, catalog: CATALOG });
+  await calc.sizeAnalysis({ from: '2026-10-21', to: '2026-11-20', catalog: CATALOG });
   const jql = calls.find((c) => c.path === '/rest/api/3/search/jql').body.jql;
-  assert.match(jql, /\(statusCategory != Done OR \(statusCategory = Done AND statusCategoryChangedDate >= "2026-10-21" AND statusCategoryChangedDate < "2026-11-21"\)\)/);
+  assert.equal(jql, 'assignee = currentUser() AND cf[10104] is not EMPTY AND ('
+    + '(worklogAuthor = currentUser() AND worklogDate >= "2026-10-20" AND worklogDate <= "2026-11-21")'
+    + ' OR (created >= "2026-10-21" AND created < "2026-11-21")'
+    + ' OR (statusCategoryChangedDate >= "2026-10-21" AND statusCategoryChangedDate < "2026-11-21")) ORDER BY key');
 });
 
 test('análise marca tarefa sem tamanho ou fora do catálogo, sem alertas', async () => {

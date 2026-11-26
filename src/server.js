@@ -276,7 +276,7 @@ function registerWorklogRoutes(app, { audit, catalog }) {
     const to = checkDate(req.query.to, 'Data final');
     const days = (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000 + 1;
     if (days < 1 || days > 400) throw new BadRequest('Período: de 1 a 400 dias.');
-    return ctx.worklogService.sizeAnalysis({ from, to, includeDone: req.query.concluidas === '1', catalog: catalog?.get().items ?? [] });
+    return ctx.worklogService.sizeAnalysis({ from, to, catalog: catalog?.get().items ?? [] });
   }));
   app.post('/api/worklog/tamanhos', handle(async (req, ctx) => {
     const list = req.body?.changes;

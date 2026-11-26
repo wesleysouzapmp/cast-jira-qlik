@@ -144,17 +144,19 @@ export function createUstCalculator({ client, baseUrl, myWorklogs }) {
     return { cat, size, sizeText, options, ust, problem };
   }
 
-  // Tarefas do usuário com Item do Catálogo: abertas e (com includeDone) as concluídas no período.
-  async function sizeAnalysis({ from, to, includeDone = false, catalog }) {
+  // Tarefas do usuário com Item do Catálogo, em qualquer status, com movimento no período:
+  // horas dele apontadas, criação ou mudança de categoria de status (abrir, andamento, concluir).
+  async function sizeAnalysis({ from, to, catalog }) {
     if (!catalog.length) return { from, to, sizeField: null, tasks: [], error: 'O catálogo de UST está vazio: o administrador precisa importar a planilha na tela Catálogo.' };
     const field = await findSizeField();
     if (!field) return { from, to, sizeField: null, tasks: [], error: 'Campo "Tamanho" não encontrado no Jira.' };
     const catField = QSENSE.catalogFieldId;
     const catNum = catField.replace('customfield_', '');
-    const status = includeDone
-      ? `(statusCategory != Done OR (statusCategory = Done AND statusCategoryChangedDate >= "${from}" AND statusCategoryChangedDate < "${nextDay(to)}"))`
-      : 'statusCategory != Done';
-    const issues = await search(`assignee = currentUser() AND cf[${catNum}] is not EMPTY AND ${status} ORDER BY key`, ['summary', 'status', 'timespent', catField, field.id]);
+    // worklogDate segue o fuso do perfil do Jira: um dia a mais de cada lado (como em myWorklogs).
+    const inPeriod = `((worklogAuthor = currentUser() AND worklogDate >= "${shiftDay(from, -1)}" AND worklogDate <= "${shiftDay(to, 1)}")`
+      + ` OR (created >= "${from}" AND created < "${nextDay(to)}")`
+      + ` OR (statusCategoryChangedDate >= "${from}" AND statusCategoryChangedDate < "${nextDay(to)}"))`;
+    const issues = await search(`assignee = currentUser() AND cf[${catNum}] is not EMPTY AND ${inPeriod} ORDER BY key`, ['summary', 'status', 'timespent', catField, field.id]);
     const tasks = issues.map((i) => {
       const d = describeTask(i, field, catalog);
       const hours = round2((i.fields?.timespent ?? 0) / 3600);

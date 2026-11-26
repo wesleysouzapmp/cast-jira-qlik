@@ -64,10 +64,9 @@ test('tamanhos: GET repassa período, concluídas e catálogo; POST valida e aud
   };
   const t = await makeTestApp({ services: { worklogService } });
   await t.json('PUT', '/api/admin/ust/catalogo', { items: ITEMS });
-  assert.equal((await t.json('GET', '/api/worklog/tamanhos?from=2026-10-21&to=2026-11-20&concluidas=1')).status, 200);
-  assert.deepEqual([calls[0][1].from, calls[0][1].to, calls[0][1].includeDone, calls[0][1].catalog.length], ['2026-10-21', '2026-11-20', true, 2]);
-  await t.json('GET', '/api/worklog/tamanhos?from=2026-10-21&to=2026-11-20');
-  assert.equal(calls[1][1].includeDone, false);
+  assert.equal((await t.json('GET', '/api/worklog/tamanhos?from=2026-10-21&to=2026-11-20')).status, 200);
+  assert.deepEqual([calls[0][1].from, calls[0][1].to, calls[0][1].catalog.length], ['2026-10-21', '2026-11-20', 2]);
+  await t.json('GET', '/api/worklog/tamanhos?from=2026-10-21&to=2026-11-21');
 
   const res = await t.json('POST', '/api/worklog/tamanhos', { changes: [{ key: 'QSENSE-1', size: 'M', from: 'P' }, { key: 'QSENSE-2', size: 'g', from: '' }] });
   assert.equal(res.status, 200);
