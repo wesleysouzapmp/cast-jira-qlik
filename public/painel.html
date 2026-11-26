@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Meus apontamentos</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="apontar.html" aria-label="cast-jira-qlik, início"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect class="bar" x="1" y="3" width="3" height="14" rx="1"/><rect class="bar" x="6" y="7" width="3" height="10" rx="1"/><rect class="bar on" x="11" y="10" width="3" height="7" rx="1"/><rect class="bar" x="16" y="5" width="3" height="12" rx="1"/></svg>cast-jira-qlik</a>
+    <nav class="pages" aria-label="Páginas">
+      <span class="nav-group">Rotina</span>
+      <a href="painel.html" aria-current="page">Meus apontamentos</a>
+      <a href="apontar.html">Apontar horas</a>
+      <a href="apoio.html">Tarefas de apoio</a>
+      <span class="nav-group">UST</span>
+      <a href="catalogo.html">Catálogo de UST</a>
+      <a href="tamanhos.html">Tamanhos e UST</a>
+      <span class="nav-group">Integração Qlik</span>
+      <a href="index.html">API Tester</a>
+    </nav>
+    <div class="conn">
+      <span id="baseUrl" class="mono"></span>
+      <span id="user" class="muted"></span>
+      <span id="tokenBadge" class="badge">…</span>
+    </div>
+  </header>
+
+  <div id="tokenBanner" class="banner" hidden>
+    <strong>Token do Jira não configurado.</strong>
+    <a href="conta.html">Configure em Minha conta</a>.
+  </div>
+
+  <main class="page stack" id="painelMain">
+    <section class="panel" id="kpiPanel">
+      <div class="actions"><h1>Indicadores</h1><span id="kpiPeriod" class="muted"></span></div>
+      <div id="kpis" class="kpis"><p class="muted">Carregando…</p></div>
+      <div id="ustKpis" class="kpis ust"></div>
+      <div id="ustInfo" class="help"></div>
+      <p class="help">Do período exibido no calendário. Dias úteis = segunda a sexta sem feriado (nacional ou do <code>feriados.json</code>). Previstas = dias úteis × limite por dia. Executadas inclui batidas em fim de semana e feriado.</p>
+    </section>
+
+    <section class="panel" id="calPanel">
+      <div class="actions">
+        <h1>Meus apontamentos</h1>
+        <button id="calPrev" class="icon" aria-label="Anterior"><span class="i i-chevron-left" aria-hidden="true"></span></button>
+        <button id="calToday">Hoje</button>
+        <button id="calNext" class="icon" aria-label="Próximo"><span class="i i-chevron-right" aria-hidden="true"></span></button>
+        <strong id="calLabel"></strong>
+        <span class="spacer"></span>
+        <div class="seg" role="group" aria-label="Visão">
+          <button data-view="day">Dia</button><button data-view="week">Semana</button><button data-view="month" class="active">Mês</button><button data-view="closing">Fechamento</button>
+        </div>
+        <button id="calUse" title="Abre Apontar horas com o período exibido no calendário">Apontar no período exibido</button>
+      </div>
+      <div class="actions">
+        <label class="inline"><input type="checkbox" id="calWeekends"> Mostrar sábados e domingos</label>
+        <label class="inline"><input type="checkbox" id="calHolidays"> Mostrar feriados</label>
+        <span id="calClosingOpts" class="inline" hidden>
+          <label class="inline">Fechamento: dia inicial (mês anterior) <input type="number" id="calCloseStart" class="short" min="1" max="31" step="1"></label>
+          <label class="inline">dia final <input type="number" id="calCloseEnd" class="short" min="1" max="31" step="1"></label>
+        </span>
+      </div>
+      <p class="help">Seus apontamentos no Jira (os mesmos do My Work Overview do Clockwork). Clique num dia para ver e ajustar as batidas; Shift+clique marca um período para apontar. Quanto mais horas no dia, mais forte o azul: <span class="heat-legend">0h <i class="l0"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i> limite</span>; o selo <span class="over-tag">+1h</span> mostra o que passou do limite diário.</p>
+      <div id="selBar" class="actions sel-bar" hidden>
+        <span>Período marcado: <strong id="selText"></strong></span>
+        <button id="selGo" class="primary">Apontar neste período</button>
+        <button id="selClear">Limpar</button>
+      </div>
+      <div id="calError" class="error" hidden></div>
+      <div id="calBody"></div>
+    </section>
+
+  </main>
+
+  <dialog id="dayPanel" class="day-panel">
+    <div class="actions">
+      <h2 class="dp-title"></h2>
+      <span class="spacer"></span>
+      <span class="dp-total"></span>
+    </div>
+    <div class="dp-error error" hidden></div>
+    <div class="dp-info help" hidden></div>
+    <div class="dp-body"></div>
+    <div class="actions">
+      <button class="dp-period">Apontar neste dia</button>
+      <span class="spacer"></span>
+      <button class="dp-close">Fechar</button>
+      <button class="dp-save primary">Salvar alterações</button>
+    </div>
+  </dialog>
+
+  <script src="session.js"></script>
+  <script type="module" src="painel.js"></script>
+</body>
+</html>

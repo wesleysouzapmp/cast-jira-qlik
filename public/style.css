@@ -469,3 +469,44 @@ td.hours-cell { min-width: 150px; }
 .urlbar button:disabled { opacity: .5; }
 @media (prefers-color-scheme: dark) { .urlbar { background: #0e0f11; border: 1px solid var(--border); } }
 #epPath.url-path { color: #e6edf3; }
+
+/* ---- Meus apontamentos: período marcado com Shift+clique ---- */
+.sel-bar { padding: 10px 14px; border-radius: 10px; background: var(--code-bg); margin: 4px 0 12px; }
+.page-note { margin: 0; }
+
+/* ---- Responsividade ---- */
+/* Campos e seletores nunca passam da largura do contêiner; rótulos com campo quebram linha. */
+select, input:not([type=checkbox]):not([type=radio]) { max-width: 100%; }
+label.inline { flex-wrap: wrap; max-width: 100%; }
+.actions > * { max-width: 100%; }
+/* Tabelas pequenas (detalhes de UST, regras, histórico) rolam na horizontal em vez de cortar. */
+table.small { display: block; max-width: 100%; overflow-x: auto; }
+
+@media (max-width: 900px) {
+  /* Menu numa linha só, com rolagem lateral: o conteúdo aparece logo no topo. */
+  .pages { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .pages::-webkit-scrollbar { display: none; }
+  .pages a { flex: none; }
+  .conn { flex-wrap: wrap; }
+}
+
+@media (max-width: 600px) {
+  .page { padding: 12px; }
+  .stack { gap: 12px; }
+  .panel { padding: 16px; border-radius: 12px; }
+  .saldo { gap: 16px; }
+  .saldo-main { min-width: 0; }
+  .saldo-fig { flex-wrap: wrap; }
+  .saldo-fig strong { font-size: 40px; line-height: 44px; }
+  .ruler { flex-basis: 100%; }
+  .cat-card { padding: 14px; gap: 12px; }
+  .cat-sizes { grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .day-panel { width: calc(100vw - 16px); padding: 12px; }
+  input.comment { min-width: 180px; }
+  #periodPanel .grid-fields { grid-template-columns: minmax(0, 1fr); }
+  .grid-fields { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+  .urlbar { flex-wrap: wrap; }
+  .urlbar button { min-height: 44px; flex: 1; }
+  /* Título do calendário numa linha; setas, hoje e mês juntos na seguinte. */
+  #calPanel > .actions:first-child > h1 { flex-basis: 100%; }
+}
