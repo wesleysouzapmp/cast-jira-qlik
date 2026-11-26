@@ -112,7 +112,7 @@ function render() {
         el('td', {}, t.size ? el('span', { class: 'size-tag' }, `${t.cat ?? '—'} ${t.size} · ${fmt(t.ust)} UST`) : el('span', { class: 'size-tag none' }, t.problem ?? '—')),
         el('td', {}, sel),
         el('td', {}, ...t.alerts.map((a) => el('span', { class: `badge ${a === 'under' ? 'warn' : ''}`.trim() }, ALERT[a])), t.problem && t.size ? el('span', { class: 'bad' }, t.problem) : null),
-        el('td', { class: 'wrap' }, result));
+        el('td', { class: 'result' }, result));
     }));
   }
   update();

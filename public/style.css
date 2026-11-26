@@ -130,9 +130,9 @@ body:has(> .topbar) > *:not(.topbar) { grid-column: 2; min-width: 0; }
 .banner { margin: 16px 40px 0; padding: 12px 16px; border-radius: 12px; background: var(--over-bg); color: var(--text); }
 .banner a { color: var(--warn); font-weight: 500; }
 
-.page { padding: 28px 40px 48px; max-width: 1400px; }
+.page { padding: 28px 40px 48px; }
 .stack { display: flex; flex-direction: column; gap: 20px; }
-.layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 20px; padding: 28px 40px 48px; max-width: 1400px; }
+.layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 20px; padding: 28px 40px 48px; }
 .main { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 
 @media (max-width: 900px) {
@@ -226,9 +226,11 @@ table.items td.wrap { white-space: normal; min-width: 220px; }
 table.items tr.dim td { color: var(--muted); }
 table.items .ok { color: var(--ok); font-weight: 500; }
 table.items .bad, #previewBody .bad { color: var(--err); }
-#table input:not(.short) { width: 100%; min-width: 180px; }
+#table input:not(.short):not([type=checkbox]):not([type=radio]) { width: 100%; min-width: 180px; }
 #table input.invalid { border-color: var(--err); }
-#table select { max-width: 340px; }
+#table select { max-width: 260px; }
+#table td.result { white-space: normal; min-width: 0; max-width: 260px; }
+#bulkCat { width: 360px; }
 input.invalid { outline: 2px solid var(--err); }
 
 /* API Tester: lista de endpoints */
@@ -387,7 +389,9 @@ input.comment { width: 100%; min-width: 260px; }
 .dp-table .bad { color: var(--err); }
 
 /* ---- Minha conta e Usuários ---- */
-.account { display: flex; flex-direction: column; gap: 20px; max-width: 960px; }
+/* Minha conta e Usuários: blocos em colunas lado a lado; os que têm tabela usam a linha inteira. */
+.account { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 560px), 1fr)); gap: 20px; align-items: start; }
+.account > .panel:has(table) { grid-column: 1 / -1; }
 .account h2 { font-size: 16px; margin: 0 0 8px; }
 .account > .panel:first-child h1 { font-size: 28px; line-height: 32px; letter-spacing: -0.02em; }
 .form-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
@@ -473,6 +477,13 @@ td.hours-cell { min-width: 150px; }
 /* ---- Meus apontamentos: período marcado com Shift+clique ---- */
 .sel-bar { padding: 10px 14px; border-radius: 10px; background: var(--code-bg); margin: 4px 0 12px; }
 .page-note { margin: 0; }
+/* Telas largas: indicadores numa coluna à esquerda, calendário ao lado (células sem esticar demais). */
+@media (min-width: 1600px) {
+  #painelMain { display: grid; grid-template-columns: minmax(460px, 1fr) minmax(0, 2fr); align-items: start; }
+  #painelMain > #kpiPanel { position: sticky; top: 20px; }
+  #painelMain .saldo { flex-direction: column; align-items: stretch; }
+  #painelMain .ruler { flex-basis: auto; }
+}
 
 /* ---- Responsividade ---- */
 /* Campos e seletores nunca passam da largura do contêiner; rótulos com campo quebram linha. */
