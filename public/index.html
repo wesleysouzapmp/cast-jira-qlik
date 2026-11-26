@@ -36,11 +36,14 @@
 
     <main class="main">
       <section class="panel" id="form">
-        <div class="ep-head">
-          <h1 id="epTitle">Selecione um endpoint</h1>
-          <code id="epPath" class="mono"></code>
-        </div>
+        <h1 id="epTitle">Selecione um endpoint</h1>
         <p id="epHelp" class="help"></p>
+        <div class="urlbar">
+          <span id="epMethod" class="url-method"></span>
+          <code id="epPath" class="url-path"></code>
+          <button id="btnCall" disabled>Chamar</button>
+          <button id="btnPaginate" class="primary" disabled>Paginar tudo</button>
+        </div>
 
         <div id="customFields" class="grid2" hidden>
           <label>Caminho (GET)<input id="customPath" class="mono" placeholder="/rest/api/3/issue/ABC-1"></label>
@@ -70,9 +73,6 @@
         <div class="actions">
           <label class="inline">Máx. páginas <input id="maxPages" type="number" min="1" max="1000" value="20"></label>
           <label class="inline">Conexão Qlik <input id="connName" value="Jira_REST"></label>
-          <span class="spacer"></span>
-          <button id="btnCall" disabled>Chamar</button>
-          <button id="btnPaginate" class="primary" disabled>Paginar tudo</button>
         </div>
       </section>
 

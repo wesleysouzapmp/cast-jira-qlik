@@ -62,20 +62,20 @@ function renderItems() {
       el('td', { class: 'wrap', title: i.summary }, i.summary),
       el('td', { class: 'wrap' }, ...renderResult(i.key))));
     if (!i.isEpic || !open) continue;
-    if (!i.existing.length) {
-      rows.push(el('tr', { class: 'tree-child' }, el('td'), el('td', { class: 'nowrap muted' }, el('span', { class: 'tree-branch' }, '└─'), 'sem tarefas de apoio'), el('td'), el('td'), el('td'), el('td')));
-      continue;
-    }
-    i.existing.forEach((t, n) => {
-      const last = n === i.existing.length - 1;
-      rows.push(el('tr', { class: 'tree-child' },
-        el('td'),
-        el('td', { class: 'nowrap' }, el('span', { class: 'tree-branch' }, last ? '└─' : '├─'), link(t.key, t.url)),
-        el('td', {}, MODEL_LABEL[t.model]),
-        el('td', {}, t.status ?? ''),
-        el('td', { class: 'wrap', title: t.summary ?? '' }, t.summary ?? ''),
-        el('td')));
-    });
+    // Espaços das tarefas de apoio do épico: preenchido quando a tarefa existe; tracejado quando
+    // falta (o texto troca para "será criada" pelo CSS quando o épico está marcado).
+    const slot = (label, t) => (t
+      ? el('div', { class: `slot${/conclu/i.test(t.status ?? '') ? ' done' : ''}` },
+        el('span', { class: 'slot-label' }, label), link(t.key, t.url), el('span', { class: 'slot-status' }, t.status ?? ''))
+      : el('div', { class: 'slot todo' },
+        el('span', { class: 'slot-label' }, label),
+        el('span', { class: 'slot-missing' }, 'sem tarefa'), el('span', { class: 'slot-will' }, 'será criada')));
+    const models = Object.keys(MODEL_LABEL);
+    const slots = [
+      ...models.map((m) => slot(MODEL_LABEL[m], i.existing.find((t) => t.model === m))),
+      ...i.existing.filter((t) => !models.includes(t.model)).map((t) => slot(MODEL_LABEL[t.model] ?? 'Apoio', t)),
+    ];
+    rows.push(el('tr', { class: 'tree-child slots-row' }, el('td'), el('td', { colSpan: 5 }, el('div', { class: 'slots' }, ...slots))));
   }
   tbody.replaceChildren(...rows);
   updateButtons();

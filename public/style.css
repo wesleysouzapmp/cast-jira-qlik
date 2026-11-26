@@ -417,3 +417,55 @@ body:has(> .auth-page) { min-height: 100vh; display: grid; grid-template-columns
 .auth-page .msg { margin: 12px 0 0; min-height: 1.4em; }
 .auth-page .msg.err { color: var(--err); }
 @media (max-width: 800px) { body:has(> .auth-page) { display: block; } .auth-art { display: none; } .auth-page { padding: 32px 24px; } }
+
+/* ---- Tarefas de apoio: espaços Análise / Implementação por épico ---- */
+tr.slots-row td { padding-top: 0; padding-bottom: 12px; }
+tr.slots-row:hover td { background: none; }
+.slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; max-width: 760px; }
+.slot { display: grid; grid-template-columns: auto 1fr; align-items: baseline; gap: 2px 10px; padding: 8px 12px; border-radius: 10px; background: var(--code-bg); border: 1px solid var(--border); font-size: 12px; }
+.slot-label { grid-column: 1 / -1; color: var(--faint); }
+.slot a { font: 500 13px var(--mono); }
+.slot-status { color: var(--muted); justify-self: end; }
+.slot.done { background: var(--cal-ok-bg); border-color: transparent; }
+.slot.done .slot-status { color: var(--ok); }
+.slot.todo { background: none; border-style: dashed; border-color: var(--border-strong); color: var(--faint); }
+.slot.todo .slot-will { display: none; }
+tr.tree-root:has(input:checked) + tr.slots-row .slot.todo { border-color: var(--accent); background: var(--sel); color: var(--accent); }
+tr.tree-root:has(input:checked) + tr.slots-row .slot.todo .slot-will { display: inline; font-weight: 500; }
+tr.tree-root:has(input:checked) + tr.slots-row .slot.todo .slot-missing { display: none; }
+
+/* ---- Tamanhos e UST: barra de horas e etiqueta do tamanho ---- */
+td.hours-cell { min-width: 150px; }
+.hours-num { display: inline-block; width: 48px; font: 500 13px var(--mono); text-align: right; margin-right: 10px; }
+.hbar { display: inline-block; vertical-align: middle; width: 80px; height: 6px; border-radius: 3px; background: var(--hover); overflow: hidden; }
+.hbar span { display: block; height: 100%; background: var(--heat-4); border-radius: 3px; }
+.size-tag { display: inline-block; padding: 1px 8px; border-radius: 6px; background: var(--heat-1); color: var(--text); font: 500 12px/20px var(--mono); }
+.size-tag.none { background: var(--err-bg); color: var(--err); font-family: var(--font); }
+
+/* ---- Catálogo de UST: um cartão por CAT ---- */
+.cat-cards { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+.cat-card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 24px; padding: 20px; border: 1px solid var(--border); border-radius: 14px; }
+@media (max-width: 900px) { .cat-card { grid-template-columns: minmax(0, 1fr); } }
+.cat-head { display: flex; flex-direction: column; gap: 6px; }
+.cat-code { font: 500 13px var(--mono); color: var(--accent); }
+.cat-task { font-size: 15px; font-weight: 500; line-height: 22px; }
+.cat-sizes { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; }
+.cat-size { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 12px; background: var(--code-bg); min-height: 76px; }
+.cat-size.empty { background: none; border: 1px dashed var(--border-strong); color: var(--faint); }
+.cat-size-top { display: flex; justify-content: space-between; align-items: baseline; font: 500 13px var(--mono); color: var(--muted); }
+.cat-size-top strong { font: 500 22px var(--mono); letter-spacing: -0.02em; color: var(--text); }
+.cat-size.empty strong { color: var(--faint); }
+.cat-desc { font-size: 12px; line-height: 16px; color: var(--muted); }
+
+/* ---- API Tester: método, caminho e ações numa barra só ---- */
+.urlbar { display: flex; align-items: stretch; min-height: 48px; margin: 4px 0 16px; border-radius: 12px; background: #1b1f24; color: #e6edf3; overflow: hidden; }
+.url-method { display: flex; align-items: center; padding: 0 16px; font: 500 13px var(--mono); color: #7ee2b8; border-right: 1px solid rgba(255, 255, 255, 0.1); }
+.url-method:empty { display: none; }
+.url-path { flex: 1; min-width: 0; display: flex; align-items: center; padding: 0 16px; font: 400 14px var(--mono); color: #e6edf3; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.urlbar button { height: auto; border: 0; border-radius: 0; padding: 0 20px; background: rgba(255, 255, 255, 0.08); color: #fff; font-weight: 500; }
+.urlbar button:hover:not(:disabled):not(.active) { background: rgba(255, 255, 255, 0.16); }
+.urlbar button.primary { background: #0c66e4; border: 0; color: #fff; }
+.urlbar button.primary:hover:not(:disabled) { background: #0055cc; }
+.urlbar button:disabled { opacity: .5; }
+@media (prefers-color-scheme: dark) { .urlbar { background: #0e0f11; border: 1px solid var(--border); } }
+#epPath.url-path { color: #e6edf3; }

@@ -4,7 +4,7 @@ import { readXlsxRows } from '/lib/xlsx.js';
 import { catalogFromRows, SIZES } from '/lib/ustCatalog.js';
 
 const $ = (id) => document.getElementById(id);
-const state = { saved: [], items: [], canEdit: false, busy: false, filter: '' };
+const state = { saved: [], items: [], canEdit: false, busy: false, filter: '', view: 'cards' };
 
 function el(tag, props = {}, ...children) {
   const node = document.createElement(tag);
@@ -42,11 +42,43 @@ function updateBar() {
   $('dirty').textContent = d ? 'Há alterações não salvas.' : '';
 }
 
+// Visão em cartões: um cartão por CAT, com o valor de cada tamanho; o que não tem linha fica vazio.
+function renderCards(shown) {
+  $('cards').hidden = state.view !== 'cards';
+  $('tableWrap').hidden = state.view === 'cards';
+  for (const b of document.querySelectorAll('[data-view]')) b.classList.toggle('active', b.dataset.view === state.view);
+  if (state.view !== 'cards') return;
+  if (!shown.length) {
+    $('cards').replaceChildren(el('p', { class: 'muted' }, state.items.length ? 'Nenhuma linha com esse filtro.' : 'Catálogo vazio.'));
+    return;
+  }
+  const groups = new Map();
+  for (const { item } of shown) {
+    const k = String(item.cat ?? '').trim().toUpperCase() || '—';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(item);
+  }
+  $('cards').replaceChildren(...[...groups].map(([cat, items]) => {
+    const sizes = SIZES.filter((s) => s !== 'Hora' || items.some((i) => i.size === 'Hora'));
+    return el('article', { class: 'cat-card' },
+      el('div', { class: 'cat-head' }, el('span', { class: 'cat-code' }, cat), el('span', { class: 'cat-task' }, items.find((i) => i.task)?.task ?? '')),
+      el('div', { class: 'cat-sizes' }, ...sizes.map((s) => {
+        const it = items.find((i) => i.size === s);
+        return it
+          ? el('div', { class: 'cat-size' }, el('div', { class: 'cat-size-top' }, el('span', {}, s), el('strong', {}, fmtUst(it.ust))), el('span', { class: 'cat-desc' }, it.description ?? ''))
+          : el('div', { class: 'cat-size empty' }, el('div', { class: 'cat-size-top' }, el('span', {}, s), el('strong', {}, '—')), el('span', { class: 'cat-desc' }, 'sem linha'));
+      })));
+  }));
+}
+
+function setView(v) { state.view = v; render(); }
+
 function render() {
   const f = state.filter.trim().toLowerCase();
   const shown = state.items.map((item, idx) => ({ item, idx }))
     .filter(({ item }) => !f || [item.cat, item.task, item.description, item.size].some((x) => String(x ?? '').toLowerCase().includes(f)));
   $('count').textContent = `${shown.length} de ${state.items.length} ${state.items.length === 1 ? 'linha' : 'linhas'}`;
+  renderCards(shown);
   if (!state.items.length) {
     $('rows').replaceChildren(el('tr', {}, el('td', { colSpan: 6, class: 'muted' }, state.canEdit
       ? 'Catálogo vazio. Use “Importar planilha (.xlsx)” para carregar o catálogo.'
@@ -115,7 +147,7 @@ async function importFile(file) {
     const list = (title, rows, fmt) => (rows.length ? el('details', {}, el('summary', {}, `${title}: ${rows.length}`), el('ul', {}, ...rows.map((r) => el('li', {}, fmt(r))))) : null);
     const apply = el('button', { type: 'button', class: 'primary' }, 'Usar a planilha');
     const cancel = el('button', { type: 'button' }, 'Cancelar');
-    apply.addEventListener('click', () => { state.items = clone(items); $('importBox').hidden = true; render(); });
+    apply.addEventListener('click', () => { state.items = clone(items); state.view = 'table'; $('importBox').hidden = true; render(); });
     cancel.addEventListener('click', () => { $('importBox').hidden = true; });
     $('importBox').replaceChildren(...[
       el('p', {}, el('strong', {}, file.name), ` — ${items.length} linhas. Ao usar a planilha, a tabela abaixo é substituída; depois clique em “Salvar alterações”.`),
@@ -135,13 +167,14 @@ async function importFile(file) {
 async function save() {
   showError('');
   const bad = state.items.findIndex((i) => !/^CAT-\d+$/.test(i.cat ?? '') || !Number.isFinite(i.ust));
-  if (bad >= 0) { showError(`Linha ${bad + 1}: confira o CAT (ex.: CAT-123) e a UST (número, ex.: 0,5).`); return; }
+  if (bad >= 0) { state.view = 'table'; render(); showError(`Linha ${bad + 1}: confira o CAT (ex.: CAT-123) e a UST (número, ex.: 0,5).`); return; }
   if (!state.items.length) { showError('O catálogo não pode ficar vazio.'); return; }
   const seen = new Set();
   const dup = state.items.find((i) => { const k = keyOf(i); if (seen.has(k)) return true; seen.add(k); return false; });
   if (dup) {
     state.filter = dup.cat;
     $('filter').value = dup.cat;
+    state.view = 'table';
     render();
     showError(`${keyOf(dup)} aparece mais de uma vez; deixe só uma linha (a tabela foi filtrada por ${dup.cat}).`);
     return;
@@ -162,7 +195,8 @@ async function save() {
 }
 
 $('file').addEventListener('change', (ev) => { const f = ev.target.files?.[0]; if (f) importFile(f); ev.target.value = ''; });
-$('btnAdd').addEventListener('click', () => { state.items.unshift({ cat: '', size: 'P', ust: NaN, task: '', description: '' }); state.filter = ''; $('filter').value = ''; render(); });
+$('btnAdd').addEventListener('click', () => { state.items.unshift({ cat: '', size: 'P', ust: NaN, task: '', description: '' }); state.filter = ''; $('filter').value = ''; state.view = 'table'; render(); });
+for (const b of document.querySelectorAll('[data-view]')) b.addEventListener('click', () => setView(b.dataset.view));
 $('btnSave').addEventListener('click', save);
 $('btnUndo').addEventListener('click', () => { state.items = clone(state.saved); render(); });
 $('filter').addEventListener('input', () => { state.filter = $('filter').value; render(); });

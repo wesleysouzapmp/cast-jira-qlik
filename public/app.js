@@ -93,7 +93,8 @@ function selectEndpoint(ep) {
   state.endpoint = ep;
   document.querySelectorAll('#catalog button').forEach((b) => b.classList.toggle('active', b.dataset.id === ep.id));
   $('epTitle').textContent = ep.label;
-  $('epPath').textContent = ep.id === 'custom' ? '' : `${ep.method} ${ep.path}`;
+  $('epMethod').textContent = ep.method;
+  $('epPath').textContent = ep.id === 'custom' ? 'informe o caminho abaixo' : ep.path;
   $('epHelp').textContent = ep.help || '';
   $('customFields').hidden = ep.id !== 'custom';
 

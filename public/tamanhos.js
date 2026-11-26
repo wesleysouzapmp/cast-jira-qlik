@@ -63,7 +63,10 @@ function mark(t) { state.checked.add(t.key); }
 
 function render() {
   const shown = visible();
-  $('count').textContent = state.tasks.length ? `${shown.length} de ${state.tasks.length} tarefas` : '';
+  const noSize = state.tasks.filter((t) => !t.size).length;
+  const withAlert = state.tasks.filter((t) => t.alerts.length).length;
+  $('count').textContent = state.tasks.length ? `${shown.length} de ${state.tasks.length} tarefas · ${noSize} sem tamanho · ${withAlert} com alerta` : '';
+  const maxHours = Math.max(1, ...shown.map((t) => t.hours || 0));
   if (!shown.length) {
     $('rows').replaceChildren(el('tr', {}, el('td', { colSpan: 9, class: 'muted' }, state.tasks.length ? 'Nenhuma tarefa com alerta.' : 'Nenhuma tarefa com Item do Catálogo no período.')));
   } else {
@@ -105,8 +108,8 @@ function render() {
         el('td', { class: 'wrap', title: t.summary }, link(t.key, t.url), ` ${t.summary}`),
         el('td', {}, t.status),
         el('td', {}, catSel),
-        el('td', {}, `${fmt(t.hours)} h`),
-        el('td', {}, t.size ? `${t.cat ?? '—'} ${t.size} · ${fmt(t.ust)} UST` : el('span', { class: 'bad' }, t.problem ?? '—')),
+        el('td', { class: 'hours-cell' }, el('span', { class: 'hours-num' }, `${fmt(t.hours)} h`), el('span', { class: 'hbar' }, el('span', { style: `width:${Math.round((t.hours || 0) / maxHours * 100)}%` }))),
+        el('td', {}, t.size ? el('span', { class: 'size-tag' }, `${t.cat ?? '—'} ${t.size} · ${fmt(t.ust)} UST`) : el('span', { class: 'size-tag none' }, t.problem ?? '—')),
         el('td', {}, sel),
         el('td', {}, ...t.alerts.map((a) => el('span', { class: `badge ${a === 'under' ? 'warn' : ''}`.trim() }, ALERT[a])), t.problem && t.size ? el('span', { class: 'bad' }, t.problem) : null),
         el('td', { class: 'wrap' }, result));

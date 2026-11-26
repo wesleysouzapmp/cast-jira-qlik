@@ -34,8 +34,11 @@
       </div>
       <div id="importBox" class="reminder help" hidden></div>
       <div id="errorBox" class="error" hidden></div>
-      <div class="actions"><input id="filter" placeholder="Filtrar por CAT ou texto" aria-label="Filtrar"><span id="count" class="muted"></span></div>
-      <div class="table-wrap">
+      <div class="actions"><input id="filter" placeholder="Filtrar por CAT ou texto" aria-label="Filtrar"><span id="count" class="muted"></span><span class="spacer"></span>
+        <div class="seg" role="group" aria-label="Visão"><button type="button" data-view="cards" class="active">Cartões</button><button type="button" data-view="table">Tabela</button></div>
+      </div>
+      <div id="cards" class="cat-cards"></div>
+      <div class="table-wrap" id="tableWrap" hidden>
         <table class="items" id="table">
           <thead><tr><th>CAT</th><th>Tarefa</th><th>Tamanho</th><th>Descrição</th><th>UST</th><th></th></tr></thead>
           <tbody id="rows"><tr><td colspan="6" class="muted">Carregando…</td></tr></tbody>
