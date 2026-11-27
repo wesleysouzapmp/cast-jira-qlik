@@ -141,7 +141,6 @@ test('accepts localhost Host header', async () => {
 
 // ---- Tarefas de apoio ----
 import { JiraError } from '../src/support/service.js';
-import { createCatalogRepo } from '../src/db/catalog.js';
 
 function fakeSupport({ fail } = {}) {
   const calls = [];
@@ -177,7 +176,7 @@ test('support JiraError vira 502', async () => {
 test('support sem token → 409', async () => {
   const { svc, calls } = fakeSupport();
   const { post } = await start({ supportService: svc, tokenConfigured: false });
-  const res = await post('/api/support/create', { keys: ['BI-1'], tasks: { 'BI-1': [{ cat: 'CAT-105', size: 'M', summary: 'T' }] } });
+  const res = await post('/api/support/group/preview', { epicKey: 'BI-1' });
   assert.equal(res.status, 409);
   assert.match((await res.json()).error, /Configure seu token do Jira/);
   assert.equal(calls.length, 0);
@@ -384,18 +383,15 @@ test('submit pela web gera linha em audit com via = web (sem dados sensíveis)',
   assert.equal(JSON.stringify(rows).includes(cookie.slice(4)), false);
 });
 
-test('batch e support create auditam; entrada inválida e erro do serviço não auditam', async () => {
+test('batch audita; entrada inválida e erro do serviço não auditam', async () => {
   const w = fakeWorklog();
   const s = fakeSupport();
   const t = await start({ worklogService: w.svc, supportService: s.svc });
   assert.equal((await t.post('/api/worklog/batch', { changes: [{ id: '7', issueKey: 'QSENSE-1', action: 'delete' }] })).status, 200);
-  createCatalogRepo(t.db).replaceAll([{ cat: 'CAT-105', size: 'M', ust: 1 }], null);
-  assert.equal((await t.post('/api/support/create', { keys: ['BI-1', 'BI-1'], templateId: 'padrao', tasks: { 'BI-1': [{ cat: 'CAT-105', size: 'M', summary: 'Um título longo {EPICO}', description: 'Texto longo' }] } })).status, 200);
   assert.equal((await t.post('/api/worklog/submit', { entries: [] })).status, 400);
   assert.equal((await t.post('/api/worklog/preview', okPreview)).status, 200);
   assert.deepEqual(auditRows(t.db).map((r) => [r.via, r.action, r.detail]), [
     ['web', 'worklog.batch', { changes: 1, keys: ['QSENSE-1'] }],
-    ['web', 'support.create', { keys: ['BI-1'], templateId: 'padrao', template: 'Padrão', tasks: [{ epic: 'BI-1', cat: 'CAT-105', size: 'M', status: 'created', key: 'QSENSE-1' }] }],
   ]);
   const f = fakeWorklog({ fail: new ConflictError('x') });
   const t2 = await start({ worklogService: f.svc });

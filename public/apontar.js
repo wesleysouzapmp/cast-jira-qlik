@@ -3,6 +3,7 @@
 import { parseDuration, formatDuration, splitTotal, businessDays, DEFAULT_SCHEDULE } from '/lib/time.js';
 import { setupAuto } from './auto.js';
 import { onlyWorkable, WORKABLE } from '/lib/taskFilter.js';
+import { splitByPercent, DEFAULT_PERCENT, PHASES } from '/lib/groupPlan.js';
 const WORKABLE_TEXT = WORKABLE.join(' ou ');
 
 const $ = (id) => document.getElementById(id);
@@ -126,25 +127,27 @@ function renderEpics() {
     return;
   }
   box.replaceChildren(...state.epics.map((e) => {
-    const ui = state.ui.get(e.key) ?? { split: false, total: '', pct: 30, day: isoLocal(new Date()), hours: {}, checked: {}, perDay: {} };
+    const ui = state.ui.get(e.key) ?? { split: false, total: '', pct: 30, percents: { ...DEFAULT_PERCENT }, day: isoLocal(new Date()), hours: {}, checked: {}, perDay: {} };
     state.ui.set(e.key, ui);
     const head = el('div', { class: 'ep-row' },
       el('strong', {}, link(e.key, e.url), ` - ${e.summary}`),
       el('span', { class: 'badge' }, e.status));
     // Dividir total (Análise/Implementação por percentual): épicos com exatamente uma tarefa de cada;
     // as demais tarefas do épico continuam com horas por tarefa.
+    // Épico com agrupadora: divide entre as subtarefas pelo percentual por fase (Parte 3).
     const count = (m) => e.tasks.filter((t) => t.model === m).length;
-    const canSplit = count('analise') === 1 && count('implementacao') === 1;
-    const splitPair = (t) => t.model === 'analise' || t.model === 'implementacao';
+    const byPhase = splitsByPhase(e);
+    const canSplit = byPhase || (count('analise') === 1 && count('implementacao') === 1);
+    const splitPair = byPhase ? (t) => Boolean(t.subtask) : (t) => t.model === 'analise' || t.model === 'implementacao';
     if (!canSplit) ui.split = false;
-    const splitBox = el('input', { type: 'checkbox', checked: ui.split, disabled: !canSplit, title: canSplit ? 'Divide o total entre a Análise e a Implementação; as demais tarefas seguem por tarefa.' : 'Só para épicos com uma tarefa de Análise e uma de Implementação; nos demais, aponte por tarefa.' });
+    const splitBox = el('input', { type: 'checkbox', checked: ui.split, disabled: !canSplit, title: byPhase ? 'Divide o total entre as subtarefas da agrupadora pelo percentual de cada fase; as demais tarefas seguem por tarefa.' : canSplit ? 'Divide o total entre a Análise e a Implementação; as demais tarefas seguem por tarefa.' : 'Só para épicos com agrupadora ou com uma tarefa de Análise e uma de Implementação; nos demais, aponte por tarefa.' });
     splitBox.addEventListener('change', () => { ui.split = splitBox.checked; renderEpics(); });
 
     const taskRow = (t) => {
       const c = hoursControls(ui, t.key);
       return el('div', { class: 'task-row' },
         c.check,
-        el('span', { class: 'task-name' }, link(t.key, t.url), ` ${t.label ?? MODEL_LABEL[t.model]}`),
+        el('span', { class: 'task-name' }, link(t.key, t.url), ` ${t.label ?? MODEL_LABEL[t.model]}${t.subtask ? ` — ${t.summary}` : ''}`),
         el('span', { class: 'badge' }, t.status),
         el('span', { class: 'muted' }, `apontado: ${t.timeSpentMin ? formatDuration(t.timeSpentMin) : '0'}`),
         ...c.rest);
@@ -156,10 +159,23 @@ function renderEpics() {
       const day = el('input', { type: 'date', value: ui.day, title: 'Dia em que as horas começam. Se o dia passar de 8h somando os outros apontamentos, a sobra vai para o próximo dia útil.' });
       day.addEventListener('input', () => { ui.day = day.value; });
       const info = el('span', { class: 'muted' });
+      const pcts = PHASES.map((ph) => {
+        const x = el('input', { type: 'number', min: 0, max: 100, step: 5, value: ui.percents[ph.id], class: 'short', 'aria-label': `% ${ph.label}` });
+        x.addEventListener('input', () => { ui.percents[ph.id] = Number(x.value) || 0; update(); });
+        return el('label', { class: 'inline' }, `% ${ph.label}`, x);
+      });
       const update = () => {
         ui.total = total.value; ui.pct = Number(pct.value);
         const t = parseDuration(total.value);
         if (!t) { info.textContent = total.value ? 'total inválido' : ''; return; }
+        if (byPhase) {
+          const sum = PHASES.reduce((s, ph) => s + (Number(ui.percents[ph.id]) || 0), 0);
+          if (sum !== 100) { info.textContent = `os percentuais somam ${sum}%; precisam somar 100%`; return; }
+          const subs = e.tasks.filter((x) => x.subtask);
+          const r = splitByPercent(t, subs.map((x) => x.phase), ui.percents, { cap: Infinity });
+          info.textContent = subs.map((x, i) => `${x.key} ${formatDuration(r.minutes[i] || 0)}`).join(' · ');
+          return;
+        }
         const p = Math.min(Math.max(Number(pct.value) || 0, 0), 100);
         const r = splitTotal(t, p);
         info.textContent = `Análise ${formatDuration(r.analise || 0)} · Implementação ${formatDuration(r.implementacao || 0)}`;
@@ -168,7 +184,7 @@ function renderEpics() {
       pct.addEventListener('input', update);
       update();
       body = el('div', {},
-        el('div', { class: 'task-row' }, el('label', { class: 'inline' }, 'Dia do apontamento', day), el('label', { class: 'inline' }, 'Total', total), el('label', { class: 'inline' }, '% Análise', pct), info),
+        el('div', { class: 'task-row' }, el('label', { class: 'inline' }, 'Dia do apontamento', day), el('label', { class: 'inline' }, 'Total', total), ...(byPhase ? pcts : [el('label', { class: 'inline' }, '% Análise', pct)]), info),
         el('div', { class: 'muted' }, 'Até 8h no dia, somando os apontamentos de outras tarefas; a sobra vai para o próximo dia útil.'),
         ...e.tasks.filter((t) => !splitPair(t)).map(taskRow));
     } else {
@@ -178,14 +194,18 @@ function renderEpics() {
   }));
 }
 
+// Épico com agrupadora e subtarefas na lista: "Dividir total" usa o percentual por fase.
+const splitsByPhase = (e) => (e.groups?.length ?? 0) > 0 && e.tasks.some((t) => t.subtask);
+
 function readItems() {
   const items = [];
   for (const e of state.epics) {
     const ui = state.ui.get(e.key);
     const split = ui.split;
     for (const t of e.tasks) {
-      // Com "Dividir total", Análise e Implementação vêm do total; as demais, por tarefa.
-      if (split && (t.model === 'analise' || t.model === 'implementacao')) continue;
+      // Com "Dividir total", Análise e Implementação (ou as subtarefas da agrupadora) vêm do total; as demais, por tarefa.
+      const byPhase = splitsByPhase(e);
+      if (split && (byPhase ? t.subtask : (t.model === 'analise' || t.model === 'implementacao'))) continue;
       if (!ui.checked[t.key]) continue;
       const m = parseDuration(ui.hours[t.key]);
       if (!m) throw new Error(`${t.key}: informe as horas (ex.: 1h 30m).`);
@@ -197,6 +217,14 @@ function readItems() {
       const t = parseDuration(ui.total);
       if (!t) throw new Error(`${e.key}: total de horas inválido.`);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(ui.day ?? '')) throw new Error(`${e.key}: informe o dia do apontamento.`);
+      if (splitsByPhase(e)) {
+        const sum = PHASES.reduce((s, ph) => s + (Number(ui.percents[ph.id]) || 0), 0);
+        if (sum !== 100) throw new Error(`${e.key}: os percentuais por fase precisam somar 100%.`);
+        const subs = e.tasks.filter((x) => x.subtask);
+        const r = splitByPercent(t, subs.map((x) => x.phase), ui.percents, { cap: Infinity });
+        subs.forEach((x, i) => { if (r.minutes[i]) items.push({ taskKey: x.key, minutes: r.minutes[i], startDate: ui.day }); });
+        continue;
+      }
       const r = splitTotal(t, Math.min(Math.max(Number(ui.pct) || 0, 0), 100));
       const byModel = Object.fromEntries(e.tasks.filter((x) => x.model === 'analise' || x.model === 'implementacao').map((x) => [x.model, x.key]));
       if (r.analise && byModel.analise) items.push({ taskKey: byModel.analise, minutes: r.analise, startDate: ui.day });

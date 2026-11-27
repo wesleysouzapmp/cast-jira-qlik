@@ -3,7 +3,10 @@ import { fileURLToPath } from 'node:url';
 import { CATALOG, getEndpoint, buildPath, isAllowed } from './catalog.js';
 import { paginate } from './paginators.js';
 import { JiraError } from './support/service.js';
-import { validateTemplate, validateTask } from './support/templates.js';
+import { validateDraft, validateTask } from './support/templates.js';
+import { parseGroupInput, groupStatus, previewGroup, createGroupFlow } from './support/group.js';
+import { ACTIONS } from './support/actions.js';
+import { PHASES, DEFAULT_PERCENT, GROUP_LIMITS, GROUP_TITLE, GROUP_CAT } from './shared/groupPlan.js';
 import { createTemplateRepo, SYSTEM_TEMPLATE_ID } from './db/templates.js';
 import { epicSpaceFor } from './db/userData.js';
 import { runQuick } from './support/quick.js';
@@ -59,44 +62,6 @@ function resolveRequest(input = {}) {
 }
 
 const KEY_RE = /^[A-Z][A-Z0-9_]+-\d+$/;
-const MAX_KEYS = 50;
-
-function parseKeys(keys) {
-  if (!Array.isArray(keys) || keys.length === 0 || keys.length > MAX_KEYS || !keys.every((k) => typeof k === 'string' && KEY_RE.test(k))) {
-    throw new BadRequest(`Informe de 1 a ${MAX_KEYS} chaves de issue válidas (ex.: BI-2931).`);
-  }
-  return [...new Set(keys)];
-}
-
-// Tarefas da prévia/criação por épico: { 'BI-1': [{ cat, size, summary, description }] }, só para
-// chaves pedidas; CAT e tamanho revalidados no catálogo de UST.
-const MAX_TASKS_PER_EPIC = 40;
-const MAX_TASKS = 200;
-function parseTasks(tasks, keys, catalogItems) {
-  if (!tasks || typeof tasks !== 'object' || Array.isArray(tasks)) throw new BadRequest('Lista de tarefas por épico inválida.');
-  const out = {};
-  let total = 0;
-  for (const [key, list] of Object.entries(tasks)) {
-    if (!keys.includes(key)) throw new BadRequest(`Tarefas para ${String(key).slice(0, 30)}, que não está entre os épicos escolhidos.`);
-    if (!Array.isArray(list) || list.length > MAX_TASKS_PER_EPIC) throw new BadRequest(`${key}: envie de 0 a ${MAX_TASKS_PER_EPIC} tarefas.`);
-    total += list.length;
-    if (total > MAX_TASKS) throw new BadRequest(`No máximo ${MAX_TASKS} tarefas por pedido.`);
-    try {
-      out[key] = list.map((t, n) => validateTask(t, catalogItems, `${key}, tarefa ${n + 1}`, { truncate: true }));
-    } catch (err) {
-      if (err instanceof RangeError) throw new BadRequest(err.message);
-      throw err;
-    }
-  }
-  return out;
-}
-
-function parseTemplateId(id) {
-  if (id === undefined || id === null) return null;
-  if (typeof id !== 'string' || !id || id.length > 64) throw new BadRequest('Modelo inválido.');
-  return id;
-}
-
 class NotFound extends Error {}
 class Forbidden extends Error {}
 class MissingToken extends Error {}
@@ -157,12 +122,12 @@ function registerSupportRoutes(app, { audit, catalog, templates, users, db }) {
   const canEdit = (req, t) => canCreate(req) && (isAdmin(req) || (t.ownerId !== null && t.ownerId === req.user.id));
   const view = (req, t) => ({
     id: t.id, name: t.name, public: t.public, system: t.ownerId === null, ownerName: t.ownerName,
-    mine: t.ownerId === req.user.id, items: t.items, updatedAt: t.updatedAt, canEdit: canEdit(req, t),
+    mine: t.ownerId === req.user.id, activities: t.activities, updatedAt: t.updatedAt, canEdit: canEdit(req, t),
     usable: templates.isUsable(t, req.user),
   });
   const visibleTemplate = (req, id) => {
     const t = templates?.get(id);
-    if (!t || !templates.isVisible(t, req.user)) throw new NotFound('Modelo não encontrado.');
+    if (!t || !templates.isVisible(t, req.user)) throw new NotFound('Rascunho não encontrado.');
     return t;
   };
   // Modelo padrão da prévia: o último usado (se ainda utilizável), senão o "Padrão", senão o primeiro.
@@ -175,7 +140,7 @@ function registerSupportRoutes(app, { audit, catalog, templates, users, db }) {
   const checked = (fn) => (...args) => {
     try { return fn(...args); } catch (err) { if (err instanceof RangeError) throw new BadRequest(err.message); throw err; }
   };
-  const auditTemplate = (req, action, t) => auditWeb(audit, req, action, { templateId: t.id, name: t.name, public: t.public, items: t.items.length });
+  const auditTemplate = (req, action, t) => auditWeb(audit, req, action, { templateId: t.id, name: t.name, public: t.public, activities: t.activities.length });
 
   app.get('/api/support/items', handle((req, ctx) => {
     const opts = { onlyEpics: req.query.onlyEpics === '1' };
@@ -190,55 +155,58 @@ function registerSupportRoutes(app, { audit, catalog, templates, users, db }) {
       lastUsedId: defaultTemplate(req)?.id ?? null,
     })));
     app.post('/api/support/templates', local(checked((req) => {
-      if (!canCreate(req)) throw new Forbidden('Peça ao administrador para habilitar a criação de modelos.');
-      const t = templates.create(validateTemplate(req.body, catalogItems()), req.user.id);
+      if (!canCreate(req)) throw new Forbidden('Peça ao administrador para habilitar a criação de rascunhos.');
+      const t = templates.create(validateDraft(req.body), req.user.id);
       auditTemplate(req, 'support.template.create', t);
       return { template: view(req, t) };
     })));
     app.put('/api/support/templates/:id', local(checked((req) => {
       const t = visibleTemplate(req, String(req.params.id));
-      if (!canEdit(req, t)) throw new Forbidden('Só o dono do modelo ou o administrador pode alterá-lo.');
-      const out = templates.update(t.id, validateTemplate(req.body, catalogItems()));
+      if (!canEdit(req, t)) throw new Forbidden('Só o dono do rascunho ou o administrador pode alterá-lo.');
+      const out = templates.update(t.id, validateDraft(req.body));
       auditTemplate(req, 'support.template.update', out);
       return { template: view(req, out) };
     })));
     app.delete('/api/support/templates/:id', local((req) => {
       const t = visibleTemplate(req, String(req.params.id));
-      if (t.id === SYSTEM_TEMPLATE_ID) throw new Forbidden('O modelo do sistema "Padrão" não pode ser excluído; o administrador pode editá-lo.');
-      if (!canEdit(req, t)) throw new Forbidden('Só o dono do modelo ou o administrador pode excluí-lo.');
+      if (t.id === SYSTEM_TEMPLATE_ID) throw new Forbidden('O rascunho do sistema "Padrão" não pode ser excluído; o administrador pode editá-lo.');
+      if (!canEdit(req, t)) throw new Forbidden('Só o dono do rascunho ou o administrador pode excluí-lo.');
       templates.remove(t.id);
       auditTemplate(req, 'support.template.delete', t);
       return { ok: true };
     }));
   }
 
-  // Prévia: tarefas do modelo (templateId, ou o padrão da pessoa) e/ou tarefas por épico.
-  app.post('/api/support/preview', handle(async (req, ctx) => {
-    const keys = parseKeys(req.body?.keys);
-    const id = parseTemplateId(req.body?.templateId);
-    const template = id ? visibleTemplate(req, id) : defaultTemplate(req);
-    const tasks = req.body?.tasks === undefined ? undefined : parseTasks(req.body.tasks, keys, catalogItems());
-    const out = await ctx.supportService.preview(keys, { items: template?.items ?? [], ...(tasks ? { tasks } : {}) });
-    return { ...out, templateId: template?.id ?? null };
+  // Wizard da tarefa agrupadora (Parte 3). Ações e fases: lista fixa, só leitura.
+  app.get('/api/support/actions', local(() => ({ actions: ACTIONS, phases: PHASES, defaultPercent: DEFAULT_PERCENT, limits: GROUP_LIMITS, groupTitle: GROUP_TITLE })));
+
+  // Passo 1: situação da agrupadora do épico (nova, existente ou mais de uma).
+  app.get('/api/support/group', handle((req, ctx) => {
+    const key = req.query.epic;
+    if (typeof key !== 'string' || !KEY_RE.test(key)) throw new BadRequest('Chave do épico inválida.');
+    return groupStatus(ctx, key);
   }));
 
-  // Criação: as tarefas escolhidas na prévia, por épico. templateId (opcional) guarda o último
-  // modelo usado e vai para a auditoria.
-  app.post('/api/support/create', handle(async (req, ctx) => {
-    const keys = parseKeys(req.body?.keys);
-    const id = parseTemplateId(req.body?.templateId);
-    if (req.body?.tasks === undefined) throw new BadRequest('Informe as tarefas a criar em cada épico.');
-    const tasks = parseTasks(req.body.tasks, keys, catalogItems());
-    if (!Object.values(tasks).some((l) => l.length)) throw new BadRequest('Marque ao menos uma tarefa para criar.');
-    const t = id && templates ? templates.get(id) : null;
-    const template = t && templates.isVisible(t, req.user) ? t : null;
-    const out = await ctx.supportService.create(keys, tasks);
-    if (template) {
-      try { templates.setLastUsed(req.user.id, template.id); } catch (err) { console.error('[modelos]', err?.message); }
+  // Prévia (passos 5 e 6): revalida tudo e propõe a grade de datas se ela não veio. Nada é gravado.
+  app.post('/api/support/group/preview', handle((req, ctx) => previewGroup(ctx, checked(parseGroupInput)(req.body, catalogItems()))));
+
+  // Criação: agrupadora → subtarefas → apontamentos, na fila única do usuário. templateId (opcional):
+  // rascunho usado, guardado como o último.
+  app.post('/api/support/group', handle(async (req, ctx) => {
+    const input = checked(parseGroupInput)(req.body, catalogItems(), { requireWorklogs: true });
+    const out = await createGroupFlow(ctx, input);
+    const tid = typeof req.body?.templateId === 'string' && req.body.templateId.length <= 64 ? req.body.templateId : null;
+    const t = tid && templates ? templates.get(tid) : null;
+    if (t && templates.isUsable(t, req.user)) {
+      try { templates.setLastUsed(req.user.id, t.id); } catch (err) { console.error('[rascunhos]', err?.message); }
     }
-    auditWeb(audit, req, 'support.create', {
-      keys, templateId: template?.id ?? null, template: template?.name ?? null,
-      tasks: (out.results ?? []).map((r) => ({ epic: r.epic, cat: r.cat ?? null, size: r.size ?? null, status: r.status, ...(r.key ? { key: r.key } : {}) })),
+    auditWeb(audit, req, 'support.group', {
+      epic: input.epicKey,
+      group: out.group?.key ?? input.group.key ?? null, groupCreated: out.group?.status === 'created', groupStatus: out.group?.status ?? null,
+      subtasks: input.subtasks.map((s, i) => ({ cat: s.cat, size: s.size, minutes: s.minutes, phase: s.phase, key: out.subtasks?.[i]?.key ?? null, status: out.subtasks?.[i]?.status ?? null })),
+      totalMinutes: input.totalMinutes,
+      worklogs: input.worklogs.length,
+      worklogsCreated: (out.worklogs ?? []).filter((w) => w.status === 'created').length,
     });
     return out;
   }));
@@ -260,9 +228,10 @@ function registerSupportRoutes(app, { audit, catalog, templates, users, db }) {
     }
     auditWeb(audit, req, 'support.quick', {
       epic: out.epic?.key ?? null, epicCreated: out.epic?.status === 'created', projectId: input.epic?.new?.projectId ?? null,
+      group: out.group?.key ?? null, groupCreated: out.group?.status === 'created',
       task: out.task?.key ?? null, taskCreated: out.task?.status === 'created', cat: input.task.cat ?? null, size: input.task.size ?? null,
       date: input.worklog.date, start: input.worklog.start, minutes: input.worklog.minutes,
-      status: { epic: out.epic?.status ?? null, task: out.task?.status ?? null, worklog: out.worklog?.status ?? null },
+      status: { epic: out.epic?.status ?? null, group: out.group?.status ?? null, task: out.task?.status ?? null, worklog: out.worklog?.status ?? null },
     });
     return out;
   }));
@@ -300,6 +269,7 @@ function parseQuick(body, catalogItems) {
   } else {
     try {
       task = validateTask(t, catalogItems, 'Nova tarefa');
+      if (task.cat === GROUP_CAT) throw new RangeError(`Nova tarefa: ${GROUP_CAT} é o item da agrupadora; escolha outro CAT.`);
     } catch (err) {
       if (err instanceof RangeError) throw new BadRequest(err.message);
       throw err;

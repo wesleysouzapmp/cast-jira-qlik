@@ -31,8 +31,10 @@ export function renderModel(model, issue) {
   return { summary, description };
 }
 
+// Texto → documento ADF; cada linha vira um parágrafo (as listas numeradas das descrições).
 export function toAdf(text) {
-  return { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] };
+  const lines = String(text).split(/\r?\n/);
+  return { type: 'doc', version: 1, content: lines.map((line) => (line ? { type: 'paragraph', content: [{ type: 'text', text: line }] } : { type: 'paragraph' })) };
 }
 
 // task: { summary, description } (com {EPICO}); options: campos de opção já resolvidos no
@@ -45,6 +47,23 @@ export function buildCreateBody(task, issue, accountId, options = {}) {
       project: { key: QSENSE.projectKey },
       issuetype: { id: QSENSE.issueTypeId },
       ...(issue ? { parent: { key: issue.key } } : {}),
+      summary,
+      ...(description.trim() ? { description: toAdf(description) } : {}),
+      components: [{ id: QSENSE.componentId }],
+      assignee: { accountId },
+      ...options,
+    },
+  };
+}
+
+// Pedido de criação no QSENSE com tipo e pai livres (agrupadora: Tarefa com pai = épico;
+// subtarefa: tipo subtarefa com pai = agrupadora). Textos já prontos (sem {EPICO}).
+export function buildIssueBody({ typeId, parentKey, summary, description = '', accountId, options = {} }) {
+  return {
+    fields: {
+      project: { key: QSENSE.projectKey },
+      issuetype: { id: String(typeId) },
+      ...(parentKey ? { parent: { key: parentKey } } : {}),
       summary,
       ...(description.trim() ? { description: toAdf(description) } : {}),
       components: [{ id: QSENSE.componentId }],

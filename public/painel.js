@@ -52,7 +52,8 @@ async function loadTasks() {
   try {
     const r = await api('/api/worklog/tasks');
     tasks = [
-      ...r.epics.flatMap((e) => e.tasks.map((t) => ({ key: t.key, model: t.model, label: t.label, epicKey: e.key }))),
+      // Subtarefas da agrupadora: "CAT - tarefa do catálogo" e o título.
+      ...r.epics.flatMap((e) => e.tasks.map((t) => ({ key: t.key, model: t.model, label: t.subtask ? `${t.label} — ${t.summary}` : t.label, epicKey: e.key }))),
       ...(r.loose ?? []).map((t) => ({ key: t.key, model: t.model, label: t.label, epicKey: '' })),
     ];
     epics = r.epics.map((e) => ({ key: e.key, summary: e.summary }));

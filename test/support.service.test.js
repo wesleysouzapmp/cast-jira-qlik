@@ -78,7 +78,7 @@ test('listItems marca épicos e tarefas existentes (antigas pelo título)', asyn
   const [e, s] = r.items;
   assert.equal(e.isEpic, true);
   assert.equal(e.url, BASE + '/browse/BI-1');
-  assert.deepEqual(e.existing, [{ key: 'QSENSE-9', url: BASE + '/browse/QSENSE-9', cat: 'CAT-105', catLabel: 'CAT-105 - Realizar diagnóstico de incidente, problema, erro ou demanda na solução de BI', model: 'analise', status: '', summary: 'Analise da demanda BI-1 - X' }]);
+  assert.deepEqual(e.existing, [{ key: 'QSENSE-9', url: BASE + '/browse/QSENSE-9', cat: 'CAT-105', catLabel: 'CAT-105 - Realizar diagnóstico de incidente, problema, erro ou demanda na solução de BI', model: 'analise', status: '', summary: 'Analise da demanda BI-1 - X', assignee: null, timeSpentMin: 0 }]);
   assert.equal(s.isEpic, false);
   assert.deepEqual(s.existing, []);
   assert.equal(e.type, 'Épico');

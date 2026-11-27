@@ -179,6 +179,7 @@ const NO_EPIC = '__none';
 const NEW_EPIC = '__new';
 const STEP_LABEL = {
   epic: { created: 'criado', existing: 'existente', error: 'erro', skipped: 'não criado' },
+  group: { created: 'criada', existing: 'existente', error: 'erro', skipped: 'não criada' },
   task: { created: 'criada', existing: 'existente', error: 'erro', skipped: 'não criada' },
   worklog: { created: 'gravado', error: 'erro', skipped: 'não feito' },
 };
@@ -366,8 +367,12 @@ function newEntryForm({ box, button, date, entries, tasks, epics, catalog, limit
         const sp = spaceOf(st.spaceId);
         out.push(`Criar o épico “${st.epicSummary.trim()}” no espaço ${sp ? `${sp.name} (${sp.key})` : st.spaceId}.`);
       }
-      const parentText = isLoose() ? 'sem épico (tarefa solta)' : st.epic === NEW_EPIC ? 'pai: o épico novo' : `pai: ${st.epic}`;
-      out.push(`Criar a tarefa “${renderedTitle()}” (${st.cat}, tamanho ${st.size}, ${parentText}).`);
+      if (isLoose()) out.push(`Criar a tarefa “${renderedTitle()}” (${st.cat}, tamanho ${st.size}, sem épico: tarefa solta).`);
+      else {
+        const where = st.epic === NEW_EPIC ? 'do épico novo' : `de ${st.epic}`;
+        out.push(`Usar a tarefa agrupadora ${where} (Apoio › CAT-87), criando-a se ainda não existir.`);
+        out.push(`Criar a subtarefa “${renderedTitle()}” nela (${st.cat}, tamanho ${st.size}).`);
+      }
     }
     const target = st.mode === 'existing' ? ` na tarefa ${st.taskKey}` : '';
     out.push(`Apontar ${formatDuration(m)}${target} em ${fmtDate(date)} às ${st.start}${st.comment.trim() ? `, com o comentário “${cut(st.comment.trim(), 80)}”` : ''}.`);
@@ -417,7 +422,7 @@ function newEntryForm({ box, button, date, entries, tasks, epics, catalog, limit
         st.mode = 'existing';
         st.taskKey = json.task.key;
       }
-      if (json.epic?.status === 'created' || json.task?.status === 'created') onDone({ reopen: false });
+      if (json.epic?.status === 'created' || json.group?.status === 'created' || json.task?.status === 'created') onDone({ reopen: false });
     } catch (e) {
       st.error = `Nada foi gravado: ${e.message}`;
       st.stage = 'form';
@@ -446,7 +451,7 @@ function newEntryForm({ box, button, date, entries, tasks, epics, catalog, limit
     const back = el('button', {}, 'Voltar ao formulário');
     back.addEventListener('click', () => { st.stage = 'form'; st.result = null; render(); });
     return [el('strong', {}, 'Resultado'),
-      el('ul', { class: 'dp-new-steps' }, line('Épico', 'epic', r.epic), line('Tarefa', 'task', r.task), line('Apontamento', 'worklog', r.worklog)),
+      el('ul', { class: 'dp-new-steps' }, line('Épico', 'epic', r.epic), line('Agrupadora', 'group', r.group), line(isLoose() ? 'Tarefa' : 'Subtarefa', 'task', r.task), line('Apontamento', 'worklog', r.worklog)),
       ...notes.map((n) => el('p', { class: 'help' }, n)),
       el('div', { class: 'actions' }, el('span', { class: 'spacer' }), back)];
   }

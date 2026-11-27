@@ -13,6 +13,7 @@ import { createSupportService } from './support/service.js';
 import { createWorklogService } from './worklog/service.js';
 import { createAiCommenter } from './worklog/ai.js';
 import { favoritesFor, autoStoreFor } from './db/userData.js';
+import { createSubtaskRepo } from './db/templates.js';
 
 export function createContextFactory({ db, users, baseUrl, holidays, makeClient = createJiraClient, makeAi = createAiCommenter }) {
   const cache = new Map();
@@ -38,7 +39,8 @@ export function createContextFactory({ db, users, baseUrl, holidays, makeClient 
         return res;
       },
     };
-    const supportService = createSupportService({ client, baseUrl });
+    // Fase das subtarefas criadas pelo app (Parte 3), no banco.
+    const supportService = createSupportService({ client, baseUrl, subtaskStore: createSubtaskRepo(db, userId) });
     const ai = makeAi({ apiKey: s.anthropicKey || undefined });
     const worklogService = createWorklogService({ client, baseUrl, supportService, ai, holidays });
     const ctx = {

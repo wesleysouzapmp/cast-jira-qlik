@@ -11,6 +11,8 @@
 //   09:00–10:00 da segunda-feira da semana atual, para ver o gerador desviando dele.
 // - Tarefas de apoio: createmeta simulado com CAT-105/166/200 (CAT-201 desativado no Jira, para ver
 //   o erro) e Tamanho P/M/G/Hora; teste@local começa sem "Pode criar modelos" (ligue em Usuários).
+// - Parte 3: BI-3100 já tem agrupadora (QSENSE-6000, CAT-87) com a subtarefa QSENSE-6001; o tipo
+//   subtarefa (10010) aparece no createmeta do QSENSE com Item do Catálogo e Tamanho.
 // - "Gerar com IA" fica desligado (nenhuma chave Anthropic; a validação de chave sempre recusa).
 import { randomBytes } from 'node:crypto';
 import { createApp } from '../src/server.js';
@@ -62,7 +64,19 @@ const CAT_OPTIONS = [{ id: '11927', value: 'Business Intelligence', children: [
   { id: '12117', value: 'CAT-166 - Manter script de carga do Qlik Sense' },
   { id: '12200', value: 'CAT-200 - Revisar painel do Qlik Sense' },
   { id: '12201', value: 'CAT-201 - Opção desativada (simulada)', disabled: true },
-] }];
+] }, { id: '13000', value: 'Apoio', children: [{ id: '13087', value: 'CAT-87 - Item agrupador (Não será contabilizado)' }] }];
+// Tipos do QSENSE no createmeta (Parte 3): Tarefa de apoio e a subtarefa (descoberta pelo subtask: true).
+const QSENSE_TYPES = [{ id: '10002', name: 'Tarefa', subtask: false }, { id: '10010', name: 'Subtarefa', subtask: true }];
+// Agrupadora (CAT-87, pai = épico) e subtarefa dela (pai = agrupadora), como o app cria.
+const group = (key, parent) => ({ key, fields: {
+  summary: `Apoio da demanda ${parent}`, issuetype: { name: 'Tarefa de apoio', hierarchyLevel: 0 }, status: { name: 'Aberto' }, parent: { key: parent }, timespent: 0,
+  customfield_10104: { id: '13000', value: 'Apoio', child: { id: '13087', value: 'CAT-87 - Item agrupador (Não será contabilizado)' } },
+} });
+const subtask = (key, parent, summary, size) => ({ key, fields: {
+  summary, issuetype: { name: 'Subtarefa', hierarchyLevel: -1 }, status: { name: 'Aberto' }, parent: { key: parent }, timespent: 0,
+  customfield_10104: { id: '11927', value: 'Business Intelligence', child: { id: '12200', value: 'CAT-200 - Revisar painel do Qlik Sense' } },
+  customfield_10300: { value: size },
+} });
 const SIZE_OPTIONS = [{ id: '701', value: 'P' }, { id: '702', value: 'M' }, { id: '703', value: 'G' }, { id: '704', value: 'Hora' }];
 const FIELDS = [{ id: 'summary', name: 'Resumo', custom: false }, { id: 'customfield_10104', name: 'Item do Catálogo', custom: true }, { id: 'customfield_10300', name: 'Tamanho', custom: true }];
 // Espaços para criar épico pelo calendário (GET /project/search?action=create&expand=issueTypes):
@@ -88,6 +102,9 @@ function adminDataset(me) {
       epic('BI-3001', 'Painel de Inconsistências da Central de Processos', 'Aberto'),
       epic('BI-9999', 'Épico que simula erro do Jira', 'Aberto'),
       epic('BI-2700', 'Épico já concluído, sem tarefas de apoio', 'Concluído'),
+      epic('BI-3100', 'Painel com tarefa agrupadora (simulado)', 'Em Execução'),
+      group('QSENSE-6000', 'BI-3100'),
+      subtask('QSENSE-6001', 'QSENSE-6000', 'Analisar - as fontes do painel', 'G'),
       { key: 'BI-3000', fields: { summary: 'História de exemplo', issuetype: { name: 'História', hierarchyLevel: 0 }, status: { name: 'Aberto' }, project: { key: 'BI' } } },
       task('QSENSE-4085', 'BI-2931', 'analise', 'Aberto', 'P'),
       task('QSENSE-4086', 'BI-2931', 'implementacao', 'Aberto'),
@@ -157,7 +174,10 @@ function createMockJira({ me, displayName, issues: list, worklogs, nextIssue = 5
         } else if (jql.includes('statusCategory = Done')) found = [...issues.values()].filter((i) => done(i) && i.fields.customfield_10104);
         else if (jql.startsWith('assignee')) found = [...issues.values()].filter((i) => i.fields.project?.key === 'BI' || i.fields.issuetype?.hierarchyLevel === 1);
         else if (jql.includes('parent is EMPTY')) found = [...issues.values()].filter((i) => i.key.startsWith('QSENSE-') && !i.fields.parent && i.fields.customfield_10104 && !done(i));
-        else if (jql.startsWith('project = QSENSE')) {
+        else if (jql.startsWith('parent in (')) {
+          const keys = jql.match(/parent in \(([^)]*)\)/)[1].split(',').map((s) => s.trim());
+          found = [...issues.values()].filter((i) => keys.includes(i.fields.parent?.key));
+        } else if (jql.startsWith('project = QSENSE')) {
           const keys = jql.match(/parent in \(([^)]*)\)/)[1].split(',').map((s) => s.trim());
           found = [...issues.values()].filter((i) => keys.includes(i.fields.parent?.key));
         } else if (jql.startsWith('summary ~')) {
@@ -171,7 +191,8 @@ function createMockJira({ me, displayName, issues: list, worklogs, nextIssue = 5
         return ok({ issues: found, isLast: true });
       }
       // Campos da criação de "Tarefa de apoio" no QSENSE (paginado como o Jira: fields + total).
-      if (path === '/rest/api/3/issue/createmeta/QSENSE/issuetypes/10002') {
+      if (path === '/rest/api/3/issue/createmeta/QSENSE/issuetypes') return ok({ startAt: 0, maxResults: 50, total: QSENSE_TYPES.length, issueTypes: QSENSE_TYPES });
+      if (path === '/rest/api/3/issue/createmeta/QSENSE/issuetypes/10002' || path === '/rest/api/3/issue/createmeta/QSENSE/issuetypes/10010') {
         const all = [
           { fieldId: 'summary', name: 'Resumo', required: true },
           { fieldId: 'customfield_10104', name: 'Item do Catálogo', required: false, allowedValues: CAT_OPTIONS },
@@ -231,12 +252,15 @@ function createMockJira({ me, displayName, issues: list, worklogs, nextIssue = 5
         const childOpt = parentOpt?.children.find((c) => c.id === catIn?.child?.id && !c.disabled);
         if (!childOpt) return { status: 400, ok: false, data: { errorMessages: [], errors: { customfield_10104: 'Item do Catálogo inválido (simulado)' } } };
         const sizeOpt = SIZE_OPTIONS.find((o) => o.id === body.fields.customfield_10300?.id);
-        if (!sizeOpt) return { status: 400, ok: false, data: { errorMessages: [], errors: { customfield_10300: 'Tamanho inválido (simulado)' } } };
+        const isGroup = childOpt.id === '13087';
+        const isSub = String(body.fields.issuetype?.id) === '10010';
+        if (isSub && !issues.get(body.fields.parent?.key)) return { status: 400, ok: false, data: { errorMessages: [], errors: { parent: 'Pai da subtarefa inválido (simulado)' } } };
+        if (!sizeOpt && !isGroup) return { status: 400, ok: false, data: { errorMessages: [], errors: { customfield_10300: 'Tamanho inválido (simulado)' } } };
         const key = `QSENSE-${nextIssue++}`;
         issues.set(key, { key, fields: {
-          summary: body.fields.summary, assignee: { accountId: me }, issuetype: { name: 'Tarefa de apoio', hierarchyLevel: 0 }, status: { name: 'Aberto' }, ...(body.fields.parent ? { parent: { key: body.fields.parent.key } } : {}), project: { key: 'QSENSE' }, timespent: 0,
+          summary: body.fields.summary, assignee: { accountId: me }, issuetype: isSub ? { name: 'Subtarefa', hierarchyLevel: -1 } : { name: 'Tarefa de apoio', hierarchyLevel: 0 }, status: { name: 'Aberto' }, ...(body.fields.parent ? { parent: { key: body.fields.parent.key } } : {}), project: { key: 'QSENSE' }, timespent: 0,
           customfield_10104: { id: parentOpt.id, value: parentOpt.value, child: { id: childOpt.id, value: childOpt.value } },
-          customfield_10300: { value: sizeOpt.value },
+          ...(sizeOpt ? { customfield_10300: { value: sizeOpt.value } } : {}),
         } });
         return ok({ id: String(90000 + nextIssue), key }, 201);
       }

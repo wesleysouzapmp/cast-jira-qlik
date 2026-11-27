@@ -118,8 +118,8 @@ test('POST /quick: auditoria support.quick com chaves, CAT/tamanho, data e minut
   await t.json('POST', '/api/support/quick', body({ epic: { new: { projectId: '300', summary: 'Resumo secreto' } }, task: { cat: 'CAT-200', size: 'G', summary: 'Título secreto', description: 'Descrição secreta' }, worklog: { date: '2026-11-09', start: '09:00', minutes: 45, comment: 'Comentário secreto' } }));
   const [d] = audits(t.db, 'support.quick');
   assert.deepEqual(d, {
-    epic: 'DADOS-900', epicCreated: true, projectId: '300', task: 'QSENSE-901', taskCreated: true, cat: 'CAT-200', size: 'G',
-    date: '2026-11-09', start: '09:00', minutes: 45, status: { epic: 'created', task: 'created', worklog: 'created' },
+    epic: 'DADOS-900', epicCreated: true, projectId: '300', group: 'QSENSE-901', groupCreated: true, task: 'QSENSE-902', taskCreated: true, cat: 'CAT-200', size: 'G',
+    date: '2026-11-09', start: '09:00', minutes: 45, status: { epic: 'created', group: 'created', task: 'created', worklog: 'created' },
   });
   assert.doesNotMatch(JSON.stringify(d), /secret/);
   // Tarefa existente também é auditada.
@@ -139,7 +139,7 @@ test('POST /quick recusa Origin externo', async () => {
 
 test('POST /quick: erro lançado na tarefa depois do épico criado → 200, chave do épico, espaço padrão e auditoria', async () => {
   const q = quickSetup({ intercept: (req, next) => {
-    if (req.method === 'POST' && req.path === '/rest/api/3/issue' && req.body?.fields?.project?.key === 'QSENSE') throw new Error('conexão caiu');
+    if (req.method === 'POST' && req.path === '/rest/api/3/issue' && req.body?.fields?.issuetype?.id === '10003') throw new Error('conexão caiu');
     return next(req);
   } });
   const t = await makeTestApp({ services: q.ctx });
@@ -152,5 +152,14 @@ test('POST /quick: erro lançado na tarefa depois do épico criado → 200, chav
   assert.equal((await (await t.json('GET', '/api/support/spaces')).json()).defaultId, '300');
   const [d] = audits(t.db, 'support.quick');
   assert.equal(d.epic, 'DADOS-900');
-  assert.deepEqual(d.status, { epic: 'created', task: 'error', worklog: 'skipped' });
+  assert.deepEqual(d.status, { epic: 'created', group: 'created', task: 'error', worklog: 'skipped' });
+});
+
+test('POST /quick: CAT-87 (item da agrupadora) não vale como CAT da tarefa nova (400, nada criado)', async () => {
+  const t = await setup();
+  createCatalogRepo(t.db).replaceAll([...CATALOG, { cat: 'CAT-87', size: 'P', ust: 0, task: 'Item agrupador' }], null);
+  const res = await t.json('POST', '/api/support/quick', body({ task: { cat: 'CAT-87', size: 'P', summary: 'Apoio', description: '' } }));
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /CAT-87 é o item da agrupadora/);
+  assert.equal(creates(t.jira).length, 0);
 });

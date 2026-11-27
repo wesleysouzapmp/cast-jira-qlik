@@ -1,5 +1,5 @@
-// Migrações do SQLite. Cada item de MIGRATIONS é um script SQL aplicado uma única vez,
-// em ordem; `schema_version` guarda o número de migrações já aplicadas.
+// Migrações do SQLite. Cada item de MIGRATIONS é um script SQL (ou uma função (db) => {} quando
+// precisa transformar dados) aplicado uma única vez, em ordem, dentro de uma transação; `schema_version` guarda o número de migrações já aplicadas.
 //
 // Convenções:
 //  - Timestamps (created_at, at, expires_at, ...): inteiros em epoch milissegundos (INTEGER).
@@ -200,7 +200,42 @@ export const MIGRATIONS = [
   `
   ALTER TABLE user_settings ADD COLUMN epic_project_id TEXT;
   `,
+  // Parte 3: modelos viram rascunhos (nome + atividades Ação + Atividade) e a fase das subtarefas
+  // criadas pelo app. Os itens antigos (CAT, tamanho, título) ficam em support_template_items sem
+  // uso: cada um vira uma atividade, "Analisar" para CAT-105 e "Desenvolver" para os demais, com o
+  // título sem {EPICO}. support_subtasks: fase de cada subtarefa criada (chave do Jira).
+  (db) => {
+    db.exec(`
+    CREATE TABLE support_draft_activities (
+      template_id TEXT NOT NULL REFERENCES support_templates(id) ON DELETE CASCADE,
+      position    INTEGER NOT NULL,
+      action      TEXT NOT NULL,
+      activity    TEXT NOT NULL,
+      PRIMARY KEY (template_id, position)
+    );
+    CREATE TABLE support_subtasks (
+      key        TEXT PRIMARY KEY,
+      phase      TEXT NOT NULL CHECK (phase IN ('analise','execucao','testes','producao')),
+      epic_key   TEXT NOT NULL,
+      user_id    TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX idx_support_subtasks_epic ON support_subtasks(epic_key);
+    `);
+    const add = db.prepare('INSERT INTO support_draft_activities (template_id, position, action, activity) VALUES (?, ?, ?, ?)');
+    for (const r of db.prepare('SELECT template_id, position, cat, summary FROM support_template_items ORDER BY template_id, position').all()) {
+      add.run(r.template_id, r.position, r.cat === 'CAT-105' ? 'Analisar' : 'Desenvolver', draftActivityFromTitle(r.summary));
+    }
+  },
 ];
+
+// Título de um item de modelo antigo → texto da atividade: sem {EPICO} e sem separador sobrando.
+// Texto curto (abaixo dos 10 caracteres da validação) ganha " da demanda"; cortado em 300.
+export function draftActivityFromTitle(summary) {
+  const text = String(summary ?? '').replaceAll('{EPICO}', ' ').replace(/\s+/g, ' ').trim()
+    .replace(/^[\s\-–—:·|]+|[\s\-–—:·|]+$/g, '').trim() || 'Atividade';
+  return (text.length < 10 ? `${text} da demanda` : text).slice(0, 300);
+}
 
 export function migrate(db) {
   db.exec('CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)');
@@ -209,7 +244,9 @@ export function migrate(db) {
   for (let i = atual; i < MIGRATIONS.length; i++) {
     db.exec('BEGIN');
     try {
-      db.exec(MIGRATIONS[i]);
+      const m = MIGRATIONS[i];
+      if (typeof m === 'function') m(db);
+      else db.exec(m);
       db.exec('DELETE FROM schema_version');
       db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(i + 1);
       db.exec('COMMIT');

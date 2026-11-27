@@ -138,3 +138,32 @@ test('migração 6: user_settings.epic_project_id (texto, nulo) e o padrão por 
   assert.equal(epicSpaceFor(db, 'u2').get(), '7');
   db.close();
 });
+
+test('migração 7: modelos viram rascunhos (Analisar para CAT-105, Desenvolver para o resto, título sem {EPICO})', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const { migrate, draftActivityFromTitle } = await import('../src/db/migrations.js');
+  const db = new DatabaseSync(':memory:');
+  db.exec('PRAGMA foreign_keys = ON');
+  db.exec('CREATE TABLE schema_version (version INTEGER NOT NULL)');
+  for (const m of MIGRATIONS.slice(0, 6)) db.exec(m);
+  db.prepare('INSERT INTO schema_version (version) VALUES (6)').run();
+  db.prepare("INSERT INTO support_templates (id, name, is_public, owner_id, created_at, updated_at) VALUES ('t1', 'Meu', 0, NULL, 1, 1)").run();
+  const add = db.prepare('INSERT INTO support_template_items (template_id, position, cat, size, summary, description) VALUES (?, ?, ?, ?, ?, ?)');
+  add.run('t1', 0, 'CAT-105', 'M', 'Diagnóstico da demanda {EPICO}', '');
+  add.run('t1', 1, 'CAT-200', 'G', '{EPICO} - Revisar o painel publicado', 'x');
+  migrate(db);
+  assert.equal(db.prepare('SELECT version FROM schema_version').get().version, MIGRATIONS.length);
+  const rows = db.prepare("SELECT position, action, activity FROM support_draft_activities WHERE template_id = 't1' ORDER BY position").all().map((r) => ({ ...r }));
+  assert.deepEqual(rows, [
+    { position: 0, action: 'Analisar', activity: 'Diagnóstico da demanda' },
+    { position: 1, action: 'Desenvolver', activity: 'Revisar o painel publicado' },
+  ]);
+  // CAT e tamanho continuam lá (sem uso).
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM support_template_items WHERE template_id = 't1'").get().n, 2);
+  assert.deepEqual(db.prepare('PRAGMA table_info(support_subtasks)').all().map((c) => c.name), ['key', 'phase', 'epic_key', 'user_id', 'created_at']);
+  // Fix round 1: o texto da atividade nunca fica abaixo de 10 caracteres (o mínimo da validação).
+  assert.equal(draftActivityFromTitle('{EPICO}'), 'Atividade da demanda');
+  assert.equal(draftActivityFromTitle('Análise {EPICO}'), 'Análise da demanda');
+  assert.ok(draftActivityFromTitle('x').length >= 10);
+  db.close();
+});

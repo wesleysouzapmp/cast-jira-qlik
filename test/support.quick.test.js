@@ -11,6 +11,10 @@ const BASE = 'https://x.atlassian.net';
 
 const posts = (jira, path) => jira.calls.filter((c) => c.method === 'POST' && (typeof path === 'string' ? c.path === path : path.test(c.path)));
 const newTask = (o = {}) => ({ cat: 'CAT-200', size: 'G', summary: 'Revisar painel da demanda {EPICO}', description: 'Revisão {EPICO}', ...o });
+const groupIssue = (key, parent) => ({ key, fields: {
+  summary: `Apoio da demanda ${parent}`, status: { name: 'Aberto' }, parent: { key: parent }, issuetype: { name: 'Tarefa', hierarchyLevel: 0 },
+  customfield_10104: { id: '13000', child: { id: '13087', value: 'CAT-87 - Item agrupador (Não será contabilizado)' } },
+} });
 const wl = (o = {}) => ({ date: '2026-11-09', start: '09:00', minutes: 60, comment: 'Revisão do painel', ...o });
 
 test('listSpaces: pagina o project/search e fica só com quem tem tipo épico (hierarchyLevel 1)', async () => {
@@ -52,28 +56,84 @@ test('tarefa solta: cria sem parent (CAT, tamanho, responsável) e aponta nela',
   assert.deepEqual(loose.map((t) => [t.key, t.cat]), [['QSENSE-900', 'CAT-200']]);
 });
 
-test('novo épico: cria no espaço com o tipo épico dele, depois a tarefa com o épico como pai', async () => {
+test('novo épico: cria o épico, a agrupadora (CAT-87) e a subtarefa nela', async () => {
   const { jira, ctx } = quickSetup();
   const out = await runQuick(ctx, { epic: { new: { projectId: '300', summary: 'Nova demanda' } }, task: newTask(), worklog: wl() });
   assert.deepEqual(out.epic, { key: 'DADOS-900', url: `${BASE}/browse/DADOS-900`, status: 'created' });
+  assert.equal(out.group.status, 'created');
+  assert.equal(out.group.key, 'QSENSE-901');
   assert.equal(out.task.status, 'created');
+  assert.equal(out.task.key, 'QSENSE-902');
   assert.equal(out.worklog.status, 'created');
-  const [epicReq, taskReq] = posts(jira, '/rest/api/3/issue');
+  const [epicReq, groupReq, subReq] = posts(jira, '/rest/api/3/issue');
   assert.deepEqual(epicReq.body, { fields: { project: { id: '300' }, issuetype: { id: '10100' }, summary: 'Nova demanda', assignee: { accountId: ME } } });
-  assert.deepEqual(taskReq.body.fields.parent, { key: 'DADOS-900' });
-  assert.equal(taskReq.body.fields.summary, 'Revisar painel da demanda DADOS-900 - Nova demanda');
+  assert.deepEqual(groupReq.body.fields.parent, { key: 'DADOS-900' });
+  assert.deepEqual(groupReq.body.fields.issuetype, { id: '10002' });
+  assert.equal(groupReq.body.fields.summary, 'Apoio da demanda DADOS-900 - Nova demanda');
+  assert.deepEqual(groupReq.body.fields.customfield_10104, { id: '13000', child: { id: '13087' } });
+  assert.equal(groupReq.body.fields.customfield_10300, undefined);
+  assert.deepEqual(subReq.body.fields.parent, { key: 'QSENSE-901' });
+  assert.deepEqual(subReq.body.fields.issuetype, { id: '10003' });
+  assert.equal(subReq.body.fields.summary, 'Revisar painel da demanda DADOS-900 - Nova demanda');
+  assert.deepEqual(subReq.body.fields.customfield_10104, { id: '11927', child: { id: '12200' } });
+  assert.deepEqual(subReq.body.fields.customfield_10300, { id: '703' });
+  assert.deepEqual(subReq.body.fields.assignee, { accountId: ME });
+  const [w] = posts(jira, /\/worklog$/);
+  assert.equal(w.path, '/rest/api/3/issue/QSENSE-902/worklog');
 });
 
-test('épico existente: precisa ser um dos épicos do usuário; tarefa recebe o pai', async () => {
+test('épico existente sem agrupadora: precisa ser do usuário; cria a agrupadora e a subtarefa', async () => {
   const { jira, ctx } = quickSetup();
   await assert.rejects(runQuick(ctx, { epic: { key: 'BI-77' }, task: newTask(), worklog: wl() }), ScopeError);
   assert.equal(posts(jira, '/rest/api/3/issue').length, 0);
   const out = await runQuick(ctx, { epic: { key: 'BI-1' }, task: newTask(), worklog: wl() });
   assert.equal(out.epic.status, 'existing');
   assert.equal(out.epic.key, 'BI-1');
-  const [taskReq] = posts(jira, '/rest/api/3/issue');
-  assert.deepEqual(taskReq.body.fields.parent, { key: 'BI-1' });
-  assert.equal(taskReq.body.fields.summary, 'Revisar painel da demanda BI-1 - Painel de vendas');
+  assert.equal(out.group.status, 'created');
+  const [groupReq, subReq] = posts(jira, '/rest/api/3/issue');
+  assert.deepEqual(groupReq.body.fields.parent, { key: 'BI-1' });
+  assert.equal(groupReq.body.fields.summary, 'Apoio da demanda BI-1 - Painel de vendas');
+  assert.deepEqual(subReq.body.fields.parent, { key: out.group.key });
+  assert.equal(subReq.body.fields.summary, 'Revisar painel da demanda BI-1 - Painel de vendas');
+});
+
+test('épico com agrupadora: a nova tarefa entra nela como subtarefa (sem criar outra agrupadora)', async () => {
+  const { jira, ctx, worklogService } = quickSetup();
+  jira.issues.set('QSENSE-50', groupIssue('QSENSE-50', 'BI-1'));
+  const out = await runQuick(ctx, { epic: { key: 'BI-1' }, task: newTask(), worklog: wl() });
+  assert.deepEqual(out.group, { key: 'QSENSE-50', url: `${BASE}/browse/QSENSE-50`, status: 'existing' });
+  assert.equal(out.task.status, 'created');
+  const reqs = posts(jira, '/rest/api/3/issue');
+  assert.equal(reqs.length, 1);
+  assert.deepEqual(reqs[0].body.fields.parent, { key: 'QSENSE-50' });
+  // A subtarefa vira destino de horas (fase Execução); a agrupadora não.
+  const { epics } = await worklogService.listTasks();
+  const e = epics.find((x) => x.key === 'BI-1');
+  assert.deepEqual(e.groups, ['QSENSE-50']);
+  assert.ok(!e.tasks.some((t) => t.key === 'QSENSE-50'));
+  const sub = e.tasks.find((t) => t.key === out.task.key);
+  assert.equal(sub.subtask, true);
+  assert.equal(sub.phase, 'execucao');
+  assert.equal(sub.label, 'CAT-200 - Revisar painel');
+});
+
+test('épico com mais de uma agrupadora: recusa antes de gravar, com as chaves', async () => {
+  const { jira, ctx } = quickSetup();
+  jira.issues.set('QSENSE-50', groupIssue('QSENSE-50', 'BI-1'));
+  jira.issues.set('QSENSE-51', groupIssue('QSENSE-51', 'BI-1'));
+  await assert.rejects(runQuick(ctx, { epic: { key: 'BI-1' }, task: newTask(), worklog: wl() }), (e) => e instanceof ScopeError && /QSENSE-50, QSENSE-51/.test(e.message));
+  assert.equal(posts(jira, '/rest/api/3/issue').length, 0);
+});
+
+test('agrupadora falhou: não cria a subtarefa nem aponta', async () => {
+  const { jira, ctx } = quickSetup({ failCreate: (b) => (b.fields.customfield_10104?.child?.id === '13087' ? 'Item agrupador inativo' : null) });
+  const out = await runQuick(ctx, { epic: { key: 'BI-1' }, task: newTask(), worklog: wl() });
+  assert.equal(out.group.status, 'error');
+  assert.match(out.group.error, /inativo/);
+  assert.equal(out.task.status, 'skipped');
+  assert.equal(out.worklog.status, 'skipped');
+  assert.equal(posts(jira, '/rest/api/3/issue').length, 1);
+  assert.equal(posts(jira, /\/worklog$/).length, 0);
 });
 
 test('espaço fora da lista de /spaces: recusa sem criar nada', async () => {
@@ -94,7 +154,7 @@ test('épico falhou: nada mais é feito', async () => {
 });
 
 test('tarefa falhou: não aponta e mostra a chave do épico criado', async () => {
-  const { jira, ctx } = quickSetup({ failCreate: (b) => (b.fields.project?.key === 'QSENSE' ? 'Componente inválido' : null) });
+  const { jira, ctx } = quickSetup({ failCreate: (b) => (b.fields.issuetype?.id === '10003' ? 'Componente inválido' : null) });
   const out = await runQuick(ctx, { epic: { new: { projectId: '100', summary: 'Nova' } }, task: newTask(), worklog: wl() });
   assert.equal(out.epic.status, 'created');
   assert.equal(out.epic.key, 'BI-900');
@@ -140,7 +200,7 @@ test('createmeta fora do ar: para antes de criar o épico (nada gravado)', async
 
 test('erro lançado ao criar a tarefa depois do épico criado: devolve a chave do épico e tarefa com erro', async () => {
   const { jira, ctx } = quickSetup({ intercept: (req, next) => {
-    if (req.method === 'POST' && req.path === '/rest/api/3/issue' && req.body?.fields?.project?.key === 'QSENSE') throw new Error('conexão caiu');
+    if (req.method === 'POST' && req.path === '/rest/api/3/issue' && req.body?.fields?.issuetype?.id === '10003') throw new Error('conexão caiu');
     return next(req);
   } });
   const out = await runQuick(ctx, { epic: { new: { projectId: '100', summary: 'Novo' } }, task: newTask(), worklog: wl() });
@@ -155,11 +215,11 @@ test('erro lançado ao criar a tarefa depois do épico criado: devolve a chave d
 test('repetir com o épico recém-criado é aceito mesmo com o índice de busca atrasado', async () => {
   let failTask = true;
   const { ctx, worklogService } = quickSetup({
-    failCreate: (b) => (b.fields.project?.key === 'QSENSE' && failTask ? 'Opção desativada' : null),
+    failCreate: (b) => (b.fields.issuetype?.id === '10003' && failTask ? 'Opção desativada' : null),
     // A busca ainda não mostra o épico novo nem a tarefa nova.
     intercept: async (req, next) => {
       const res = await next(req);
-      if (req.path === '/rest/api/3/search/jql' && res.ok) return { ...res, data: { ...res.data, issues: res.data.issues.filter((i) => !['BI-900', 'QSENSE-901'].includes(i.key)) } };
+      if (req.path === '/rest/api/3/search/jql' && res.ok) return { ...res, data: { ...res.data, issues: res.data.issues.filter((i) => !['BI-900', 'QSENSE-901', 'QSENSE-902'].includes(i.key)) } };
       return res;
     },
   });
@@ -170,13 +230,16 @@ test('repetir com o épico recém-criado é aceito mesmo com o índice de busca 
   const again = await runQuick(ctx, { epic: { key: 'BI-900' }, task: newTask(), worklog: wl() });
   assert.equal(again.epic.status, 'existing');
   assert.equal(again.task.status, 'created');
-  assert.equal(again.task.key, 'QSENSE-901');
+  assert.equal(again.group.status, 'existing');
+  assert.equal(again.group.key, 'QSENSE-901');
+  assert.equal(again.task.key, 'QSENSE-902');
   assert.equal(again.worklog.status, 'created');
   // O épico e a tarefa novos aparecem na lista de tarefas.
   const { epics } = await worklogService.listTasks();
   const e = epics.find((x) => x.key === 'BI-900');
   assert.ok(e, 'épico novo fora da lista');
-  assert.deepEqual(e.tasks.map((t) => t.key), ['QSENSE-901']);
+  assert.deepEqual(e.tasks.map((t) => t.key), ['QSENSE-902']);
+  assert.deepEqual(e.groups, ['QSENSE-901']);
 });
 
 test('tarefa recém-criada num épico (índice atrasado) é aceita como tarefa existente depois que o apontamento falhou', async () => {
@@ -185,15 +248,15 @@ test('tarefa recém-criada num épico (índice atrasado) é aceita como tarefa e
     intercept: async (req, next) => {
       if (failWl && req.method === 'POST' && /\/worklog$/.test(req.path)) return { status: 400, ok: false, data: { errorMessages: ['recusado'] } };
       const res = await next(req);
-      if (req.path === '/rest/api/3/search/jql' && res.ok) return { ...res, data: { ...res.data, issues: res.data.issues.filter((i) => i.key !== 'QSENSE-900') } };
+      if (req.path === '/rest/api/3/search/jql' && res.ok) return { ...res, data: { ...res.data, issues: res.data.issues.filter((i) => !['QSENSE-900', 'QSENSE-901'].includes(i.key)) } };
       return res;
     },
   });
   const first = await runQuick(ctx, { epic: { key: 'BI-1' }, task: newTask(), worklog: wl() });
-  assert.equal(first.task.key, 'QSENSE-900');
+  assert.equal(first.task.key, 'QSENSE-901');
   assert.equal(first.worklog.status, 'error');
   failWl = false;
-  const again = await runQuick(ctx, { epic: null, task: { key: 'QSENSE-900' }, worklog: wl() });
+  const again = await runQuick(ctx, { epic: null, task: { key: 'QSENSE-901' }, worklog: wl() });
   assert.equal(again.worklog.status, 'created');
 });
 

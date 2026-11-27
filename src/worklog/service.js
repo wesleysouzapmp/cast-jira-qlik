@@ -3,7 +3,8 @@
 // movendo tarefa e épico para "Em Execução" conforme as regras da spec.
 import { MODELS, QSENSE } from '../support/models.js';
 import { supportTaskInfo, toAdf } from '../support/render.js';
-import { JiraError, jiraMessage, byTaskOrder } from '../support/service.js';
+import { JiraError, jiraMessage, byTaskOrder, isGroupInfo } from '../support/service.js';
+import { GROUP_CAT } from '../shared/groupPlan.js';
 import { distribute, formatDuration, toJiraStarted, hhmmToMin, minToHhmm, addDays, ANCHOR_SPAN_DAYS } from './time.js';
 import { isAdf, adfToText } from '../shared/flatten.js';
 import { pickComments, GENERIC_MODEL } from './comments.js';
@@ -66,37 +67,42 @@ export function createWorklogService({ client, baseUrl, supportService, ai, rng 
     return accountId;
   }
 
-  // Escopo: épicos em aberto atribuídos ao usuário e suas tarefas de apoio.
+  // Escopo: épicos em aberto atribuídos ao usuário e suas tarefas de apoio. A agrupadora (CAT-87)
+  // não recebe horas: sai da lista e as subtarefas dela entram (com a fase guardada no app).
+  // Reaproveita o que listItems já leu (tarefas sob o épico, agrupadoras e subtarefas, inclusive as
+  // criadas por este processo): nenhuma busca repetida no Jira.
   async function loadScope() {
     const { items } = await supportService.listItems({ onlyEpics: true });
-    const epics = items.map((e) => ({ key: e.key, summary: e.summary, status: e.status, url: e.url, tasks: [] }));
-    const byEpic = new Map(epics.map((e) => [e.key, e]));
-    for (const keys of chunk(epics.map((e) => e.key), BATCH)) {
-      const found = await search(`project = ${QSENSE.projectKey} AND parent in (${keys.join(', ')})`, ['summary', 'status', 'parent', 'timespent', 'assignee', QSENSE.catalogFieldId], 'Busca das tarefas de apoio');
-      for (const t of found) {
+    const epics = items.map((e) => ({ key: e.key, summary: e.summary, status: e.status, url: e.url, tasks: [], groups: [] }));
+    const acc = await me();
+    items.forEach((item, n) => {
+      const epic = epics[n];
+      for (const t of item.existing ?? []) {
+        if (t.group) {
+          // Agrupadora: fora da lista; as subtarefas dela (as suas) entram, com a fase.
+          epic.groups.push(t.key);
+          for (const s of t.subtasks ?? []) {
+            if (s.assignee && s.assignee !== acc) continue;
+            if (epic.tasks.some((x) => x.key === s.key)) continue;
+            epic.tasks.push({
+              key: s.key, model: s.model ?? GENERIC_MODEL.id, cat: s.cat, label: s.catLabel || s.cat || 'Subtarefa', summary: s.summary ?? '', status: s.status ?? '',
+              url: s.url ?? browse(s.key), timeSpentMin: s.timeSpentMin ?? 0, subtask: true, groupKey: t.key, phase: s.phase,
+            });
+          }
+          continue;
+        }
         // Tarefa de apoio = Item do Catálogo com código CAT (ou Análise/Implementação antiga pelo título).
-        // As que não são Análise/Implementação usam as frases genéricas e o rótulo do catálogo.
-        const info = supportTaskInfo(t);
-        const epic = byEpic.get(t.fields?.parent?.key);
-        if (!info || !epic) continue;
         // Outros CATs só quando atribuídos a você (tarefas de colegas no mesmo épico ficam de fora).
-        if (!info.model && t.fields?.assignee?.accountId !== await me()) continue;
-        const model = info.model ?? GENERIC_MODEL.id;
+        if (!t.model && t.assignee !== acc) continue;
+        if (epic.tasks.some((x) => x.key === t.key)) continue;
+        const model = t.model ?? GENERIC_MODEL.id;
         epic.tasks.push({
-          key: t.key, model, cat: info.cat, label: MODEL_LABEL[model] ?? (info.catLabel || info.cat),
-          summary: t.fields.summary ?? '', status: t.fields.status?.name ?? '', url: browse(t.key), timeSpentMin: Math.round((t.fields.timespent ?? 0) / 60),
+          key: t.key, model, cat: t.cat, label: MODEL_LABEL[model] ?? (t.catLabel || t.cat),
+          summary: t.summary ?? '', status: t.status ?? '', url: t.url ?? browse(t.key), timeSpentMin: t.timeSpentMin ?? 0,
         });
       }
-    }
-    // Criadas por este processo e que a busca ainda não mostra (atraso do índice).
-    for (const e of epics) {
-      for (const t of supportService.recentTasks?.(e.key) ?? []) {
-        if (e.tasks.some((x) => x.key === t.key)) continue;
-        const model = t.info.model ?? GENERIC_MODEL.id;
-        e.tasks.push({ key: t.key, model, cat: t.info.cat, label: MODEL_LABEL[model] ?? (t.info.catLabel || t.info.cat), summary: t.info.summary ?? '', status: t.info.status ?? '', url: browse(t.key), timeSpentMin: 0 });
-      }
-    }
-    const rank = (t) => ({ ...t, model: MODEL_LABEL[t.model] ? t.model : null });
+    });
+    const rank = (t) => ({ ...t, model: !t.subtask && MODEL_LABEL[t.model] ? t.model : null });
     for (const e of epics) e.tasks.sort((a, b) => byTaskOrder(rank(a), rank(b)));
     const tasks = new Map();
     epics.forEach((e, ei) => e.tasks.forEach((t, ti) => tasks.set(t.key, { ...t, epic: e, order: ei * 1000 + ti })));
@@ -123,7 +129,7 @@ export function createWorklogService({ client, baseUrl, supportService, ai, rng 
     const uniq = [...new Set(keys)];
     const found = new Map();
     for (const part of chunk(uniq, BATCH)) {
-      const data = await call({ method: 'POST', path: '/rest/api/3/issue/bulkfetch', body: { issueIdsOrKeys: part, fields: ['summary', 'status', 'issuetype'] } }, 'Leitura das tarefas');
+      const data = await call({ method: 'POST', path: '/rest/api/3/issue/bulkfetch', body: { issueIdsOrKeys: part, fields: ['summary', 'status', 'issuetype', QSENSE.catalogFieldId] } }, 'Leitura das tarefas');
       for (const i of data.issues ?? []) found.set(i.key, i);
     }
     return uniq.map((key) => {
@@ -131,6 +137,7 @@ export function createWorklogService({ client, baseUrl, supportService, ai, rng 
       if (!i) return { key, available: false, error: `Tarefa ${key} não encontrada ou sem acesso.` };
       const base = { key, summary: i.fields?.summary ?? '', status: i.fields?.status?.name ?? '', url: browse(key) };
       if (isEpicIssue(i)) return { ...base, available: false, error: `${key} é um épico; aponte nas tarefas dele.` };
+      if (isGroupInfo(supportTaskInfo(i))) return { ...base, available: false, error: `${key} é a tarefa agrupadora; aponte nas subtarefas dela.` };
       return { ...base, available: true };
     });
   }
@@ -139,11 +146,12 @@ export function createWorklogService({ client, baseUrl, supportService, ai, rng 
   async function findBySummary(text) {
     const norm = (s) => String(s ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
     const phrase = String(text).replace(/["\\]/g, ' ').trim();
-    const issues = await search(`summary ~ "\\"${phrase}\\"" ORDER BY created DESC`, ['summary', 'status', 'issuetype'], 'Busca da tarefa pelo texto');
+    const issues = await search(`summary ~ "\\"${phrase}\\"" ORDER BY created DESC`, ['summary', 'status', 'issuetype', QSENSE.catalogFieldId], 'Busca da tarefa pelo texto');
     const exact = issues.filter((i) => norm(i.fields?.summary) === norm(text) && !isEpicIssue(i));
     if (!exact.length) return { available: false, error: `Nenhuma tarefa com o texto "${text}".` };
     if (exact.length > 1) return { available: false, error: `Mais de uma tarefa com o texto "${text}": ${exact.map((i) => i.key).sort().join(', ')}.` };
     const [i] = exact;
+    if (isGroupInfo(supportTaskInfo(i))) return { available: false, error: `${i.key} é a tarefa agrupadora; aponte nas subtarefas dela.` };
     return { key: i.key, summary: i.fields?.summary ?? '', status: i.fields?.status?.name ?? '', url: browse(i.key), available: true };
   }
 
@@ -156,6 +164,9 @@ export function createWorklogService({ client, baseUrl, supportService, ai, rng 
   // Escopo + as avulsas pedidas. Chave inexistente, sem acesso ou épico → ScopeError (nada é gravado).
   async function scopeFor(keys) {
     const scope = await loadScope();
+    // A agrupadora nunca recebe horas, mesmo que apareça no escopo por algum caminho.
+    const groups = [...new Set(keys)].filter((k) => scope.tasks.get(k)?.cat === GROUP_CAT);
+    if (groups.length) throw new ScopeError(`${groups.join(', ')}: tarefa agrupadora; aponte nas subtarefas dela.`);
     const extra = [...new Set(keys)].filter((k) => !scope.tasks.has(k));
     if (!extra.length) return scope;
     const described = await describe(extra);
@@ -477,5 +488,5 @@ export function createWorklogService({ client, baseUrl, supportService, ai, rng 
   }
 
   const ust = createUstCalculator({ client, baseUrl, myWorklogs: (from, to) => myWorklogs(from, to) });
-  return { aiEnabled: Boolean(ai?.enabled), listTasks, describe, myWorklogs, busy, preview, aiComments, submit, batch, autoLog, findBySummary, ustSummary: ust.summary, sizeAnalysis: ust.sizeAnalysis, changeSizes: ust.changeSizes };
+  return { aiEnabled: Boolean(ai?.enabled), holidaysBetween: (from, to) => holidays.between(from, to), listTasks, describe, myWorklogs, busy, preview, aiComments, submit, batch, autoLog, findBySummary, ustSummary: ust.summary, sizeAnalysis: ust.sizeAnalysis, changeSizes: ust.changeSizes };
 }

@@ -41,15 +41,15 @@
         <label class="inline"><input type="checkbox" id="onlyEpics" checked> Só épicos</label>
         <button id="btnToggleAll">Recolher tudo</button>
         <button id="btnRefresh">Atualizar</button>
-        <button id="btnCreate" class="primary" disabled>Criar tarefas de apoio (0)</button>
+        <button id="btnCreate" class="primary" disabled>Criar tarefa de apoio</button>
       </div>
-      <p class="help">Cada épico marcado recebe no QSENSE as tarefas do modelo escolhido na prévia (o "Padrão" cria <em>Analise da demanda</em>, CAT-105, e <em>Implementação da demanda</em>, CAT-166). Na prévia você ajusta CAT, tamanho e textos, e pode adicionar tarefas avulsas antes de criar.</p>
+      <p class="help">Escolha <strong>um</strong> épico e clique em Criar tarefa de apoio. Cada épico tem uma tarefa agrupadora (Apoio › CAT-87, não contabilizada); o trabalho fica nas subtarefas dela, uma a cada 7h30, com CAT e tamanho próprios, e as horas já são apontadas ao confirmar.</p>
       <div id="truncatedNote" class="banner" hidden>Mostrando os primeiros 1000 itens atribuídos.</div>
       <div id="errorBox" class="error" hidden></div>
       <div class="grid-wrap">
         <table class="items">
           <thead>
-            <tr><th><input type="checkbox" id="selectAll" aria-label="Selecionar todos"></th><th>Chave</th><th>Tipo</th><th>Status</th><th>Resumo</th><th>Resultado</th></tr>
+            <tr><th><span class="sr-only">Escolher</span></th><th>Chave</th><th>Tipo</th><th>Status</th><th>Resumo</th><th>Resultado</th></tr>
           </thead>
           <tbody id="items"><tr><td colspan="6" class="muted">Carregando…</td></tr></tbody>
         </table>
@@ -58,46 +58,48 @@
 
     <section class="panel" id="templatesPanel">
       <div class="actions">
-        <h2>Modelos</h2>
+        <h2>Rascunhos</h2>
         <span class="spacer"></span>
-        <button id="btnNewTemplate" hidden>Novo modelo</button>
+        <button id="btnNewTemplate" hidden>Novo rascunho</button>
       </div>
-      <p class="help">Cada modelo é uma lista de tarefas com CAT, tamanho, título e descrição. <code>{EPICO}</code> vira “chave - resumo do épico”. Públicos: todos usam; privados: só quem criou.</p>
-      <p id="templatesNote" class="help reminder" hidden>Você pode usar os modelos, mas não criar nem alterar. Para isso, peça ao administrador para habilitar.</p>
+      <p class="help">Cada rascunho é uma lista de atividades (Ação + Atividade executada) que preenche o passo Atividades do assistente. Não tem CAT, horas nem datas. Públicos: todos usam; privados: só quem criou.</p>
+      <p id="templatesNote" class="help reminder" hidden>Você pode usar os rascunhos, mas não criar nem alterar. Para isso, peça ao administrador para habilitar.</p>
       <div id="templatesError" class="error" hidden></div>
       <table class="small">
-        <thead><tr><th>Nome</th><th>Visibilidade</th><th>Dono</th><th>Tarefas</th><th>Ações</th></tr></thead>
+        <thead><tr><th>Nome</th><th>Visibilidade</th><th>Dono</th><th>Atividades</th><th>Ações</th></tr></thead>
         <tbody id="templates"><tr><td colspan="5" class="muted">Carregando…</td></tr></tbody>
       </table>
     </section>
   </main>
 
-  <dialog id="previewDialog" class="wide">
-    <h2>Confirmar criação no QSENSE</h2>
-    <label class="inline tpl-pick">Modelo <select id="previewTemplate"></select></label>
-    <div id="previewError" class="error" hidden></div>
-    <div id="previewBody"></div>
+  <dialog id="wizardDialog" class="wide">
+    <h2 id="wzTitle">Criar tarefa de apoio</h2>
+    <ol id="wzSteps" class="wz-steps"></ol>
+    <div id="wzError" class="error" hidden></div>
+    <div id="wzBody" class="wz-body"></div>
     <div class="actions">
+      <span id="wzHint" class="bad"></span>
       <span class="spacer"></span>
-      <button id="btnCancel">Cancelar</button>
-      <button id="btnConfirm" class="primary">Confirmar e criar</button>
+      <button id="wzCancel">Cancelar</button>
+      <button id="wzBack">Voltar</button>
+      <button id="wzNext" class="primary">Continuar</button>
     </div>
   </dialog>
 
   <dialog id="templateDialog" class="wide">
-    <h2 id="templateTitle">Novo modelo</h2>
+    <h2 id="templateTitle">Novo rascunho</h2>
     <div class="form-row">
       <label>Nome <input type="text" id="tplName" maxlength="80"></label>
       <label class="inline"><input type="checkbox" id="tplPublic"> Público (todos os usuários veem e usam)</label>
     </div>
-    <p class="help">Sugestão de título: “tarefa do CAT no catálogo da demanda {EPICO}”. Até 20 tarefas; título com até 255 e descrição com até 2000 caracteres.</p>
+    <p class="help">Até 60 atividades; cada atividade executada com 10 a 300 caracteres.</p>
     <div id="tplItems"></div>
-    <div class="tk-tools"><button type="button" id="btnTplAdd">Adicionar tarefa</button></div>
+    <div class="tk-tools"><button type="button" id="btnTplAdd">Adicionar atividade</button></div>
     <div id="tplError" class="error" hidden></div>
     <div class="actions">
       <span class="spacer"></span>
       <button id="btnTplCancel">Cancelar</button>
-      <button id="btnTplSave" class="primary">Salvar modelo</button>
+      <button id="btnTplSave" class="primary">Salvar rascunho</button>
     </div>
   </dialog>
 

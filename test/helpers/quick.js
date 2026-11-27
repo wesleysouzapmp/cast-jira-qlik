@@ -15,12 +15,13 @@ export const META = [
   { fieldId: 'customfield_10104', name: 'Item do Catálogo', allowedValues: [{ id: '11927', value: 'Business Intelligence', children: [
     { id: '11930', value: 'CAT-105 - Realizar diagnóstico' },
     { id: '12200', value: 'CAT-200 - Revisar painel' },
-  ] }] },
+  ] }, { id: '13000', value: 'Apoio', children: [{ id: '13087', value: 'CAT-87 - Item agrupador (Não será contabilizado)' }] }] },
   { fieldId: 'customfield_10300', name: 'Tamanho', allowedValues: [{ id: '701', value: 'P' }, { id: '702', value: 'M' }, { id: '703', value: 'G' }] },
 ];
 
 // intercept(req, next): troca a resposta de um pedido (ex.: simular 503, erro de rede ou índice atrasado).
-export function quickSetup({ intercept, ...opts } = {}) {
+// holidays: { between(from, to) } dos feriados; subtaskStore: fases das subtarefas (padrão em memória).
+export function quickSetup({ intercept, holidays, subtaskStore, ...opts } = {}) {
   const jira = createFakeJira({
     issues: [epicIssue('BI-1', 'Aberto', 'Painel de vendas'), taskIssue('QSENSE-1', 'BI-1', 'analise', 'Aberto')],
     worklogs: { 'QSENSE-1': [{ id: '1', author: { accountId: ME }, started: '2026-11-09T08:00:00.000-0300', timeSpentSeconds: 3600 }] },
@@ -30,8 +31,8 @@ export function quickSetup({ intercept, ...opts } = {}) {
     const next = jira.client.call.bind(jira.client);
     jira.client.call = (req) => intercept(req, next);
   }
-  const supportService = createSupportService({ client: jira.client, baseUrl: BASE });
-  const worklogService = createWorklogService({ client: jira.client, baseUrl: BASE, supportService, ai: { enabled: false } });
+  const supportService = createSupportService({ client: jira.client, baseUrl: BASE, ...(subtaskStore ? { subtaskStore } : {}) });
+  const worklogService = createWorklogService({ client: jira.client, baseUrl: BASE, supportService, ai: { enabled: false }, ...(holidays ? { holidays } : {}) });
   return { jira, supportService, worklogService, ctx: { supportService, worklogService } };
 }
 

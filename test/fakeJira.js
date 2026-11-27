@@ -1,9 +1,11 @@
 // Jira simulado com estado, para os testes do apontamento (não contém testes).
 export const ME = 'acc-me';
+// Tipos do QSENSE no createmeta: a Tarefa de apoio e a subtarefa.
+export const QSENSE_TYPES = [{ id: '10002', name: 'Tarefa', subtask: false, hierarchyLevel: 0 }, { id: '10003', name: 'Subtarefa', subtask: true, hierarchyLevel: -1 }];
 
 // projects/projectPageSize: espaços de GET /project/search (paginado). meta: campos do createmeta da
 // tarefa de apoio. failCreate(body): texto de erro para recusar um POST /issue (ou nada para criar).
-export function createFakeJira({ issues = [], worklogs = {}, transitionsTo = { 'Em Execução': true }, failWorklogFor = [], failDeleteFor = [], delayMs = 0, indexLag = false, searchTz = 'local', unauthorized = false, projects = [], projectPageSize = 50, meta = [], failCreate = null, nextIssue = 900 } = {}) {
+export function createFakeJira({ issues = [], worklogs = {}, transitionsTo = { 'Em Execução': true }, failWorklogFor = [], failDeleteFor = [], delayMs = 0, indexLag = false, searchTz = 'local', unauthorized = false, projects = [], projectPageSize = 50, meta = [], metaByType = {}, qsenseTypes = QSENSE_TYPES, failCreate = null, nextIssue = 900 } = {}) {
   const byKey = new Map(issues.map((i) => [i.key, structuredClone(i)]));
   const wl = structuredClone(worklogs); // key → [{ id, author:{accountId}, started, timeSpentSeconds }]
   const calls = [];
@@ -27,6 +29,9 @@ export function createFakeJira({ issues = [], worklogs = {}, transitionsTo = { '
         else if (jql.startsWith('project = QSENSE')) {
           const keys = jql.match(/parent in \(([^)]*)\)/)[1].split(',').map((s) => s.trim());
           list = [...byKey.values()].filter((i) => keys.includes(i.fields.parent?.key));
+        } else if (jql.startsWith('parent in (')) {
+          const keys = jql.match(/parent in \(([^)]*)\)/)[1].split(',').map((s) => s.trim());
+          list = [...byKey.values()].filter((i) => keys.includes(i.fields.parent?.key));
         } else if (jql.startsWith('summary ~')) {
           const phrase = jql.match(/^summary ~ "\\"(.*)\\""/)[1].toLowerCase();
           list = [...byKey.values()].filter((i) => (i.fields.summary ?? '').toLowerCase().includes(phrase));
@@ -44,16 +49,21 @@ export function createFakeJira({ issues = [], worklogs = {}, transitionsTo = { '
         const values = projects.slice(startAt, startAt + size);
         return ok({ startAt, maxResults: size, total: projects.length, isLast: startAt + size >= projects.length, values });
       }
-      if (path.startsWith('/rest/api/3/issue/createmeta/')) return ok({ startAt: 0, maxResults: 100, total: meta.length, fields: meta });
+      if (path === '/rest/api/3/issue/createmeta/QSENSE/issuetypes') return ok({ startAt: 0, maxResults: 100, total: qsenseTypes.length, issueTypes: qsenseTypes });
+      if (path.startsWith('/rest/api/3/issue/createmeta/')) {
+        const list = metaByType[path.split('/').pop()] ?? meta;
+        return ok({ startAt: 0, maxResults: 100, total: list.length, fields: list });
+      }
       if (path === '/rest/api/3/issue' && method === 'POST') {
         const err = failCreate?.(body);
         if (err) return { status: 400, ok: false, data: { errorMessages: [err] } };
         const f = body.fields;
         const project = f.project?.id ? projects.find((p) => String(p.id) === String(f.project.id)) : null;
-        const type = project?.issueTypes?.find((t) => String(t.id) === String(f.issuetype?.id));
+        const type = project?.issueTypes?.find((t) => String(t.id) === String(f.issuetype?.id))
+          ?? (f.project?.key === 'QSENSE' ? qsenseTypes.find((t) => String(t.id) === String(f.issuetype?.id) && t.subtask) : null);
         const key = `${project?.key ?? f.project?.key}-${nextIssue++}`;
         const catIn = f.customfield_10104;
-        const catMeta = meta.find((x) => (x.fieldId ?? x.id) === 'customfield_10104')?.allowedValues ?? [];
+        const catMeta = (metaByType[String(f.issuetype?.id)] ?? meta).find((x) => (x.fieldId ?? x.id) === 'customfield_10104')?.allowedValues ?? [];
         const child = catMeta.flatMap((o) => o.children ?? []).find((c) => String(c.id) === String(catIn?.child?.id));
         byKey.set(key, { key, fields: {
           summary: f.summary, status: { name: 'Aberto' }, assignee: f.assignee, project: { key: project?.key ?? f.project?.key },

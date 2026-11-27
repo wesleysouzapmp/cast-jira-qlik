@@ -1,6 +1,8 @@
-// Validação dos modelos de tarefas de apoio e das tarefas enviadas na prévia/criação.
+// Validação dos rascunhos (antigos modelos), das atividades e das tarefas/subtarefas criadas.
 // CAT e tamanho precisam existir no catálogo de UST do app. Lança RangeError com mensagem para o usuário.
 import { SIZES, normSize } from '../shared/ustCatalog.js';
+import { GROUP_LIMITS } from '../shared/groupPlan.js';
+import { phaseOfAction } from './actions.js';
 
 export const LIMITS = { name: 80, items: 20, summary: 255, description: 2000 };
 const CAT_RE = /^CAT-\d{1,6}$/i;
@@ -30,14 +32,28 @@ export function validateTask(t, catalog, where, { truncate = false } = {}) {
   return { cat, size, summary, description: desc };
 }
 
-// Corpo de criação/edição de um modelo: { name, public, items }.
-export function validateTemplate(body, catalog) {
-  if (!body || typeof body !== 'object') throw new RangeError('Envie o modelo.');
+// Corpo de criação/edição de um rascunho (antigo modelo): { name, public, activities: [{ action, text }] }.
+// Sem CAT, horas nem datas.
+export function validateDraft(body) {
+  if (!body || typeof body !== 'object') throw new RangeError('Envie o rascunho.');
   const name = typeof body.name === 'string' ? body.name.trim() : '';
-  if (!name) throw new RangeError('Informe o nome do modelo.');
-  if (name.length > LIMITS.name) throw new RangeError(`Nome do modelo com até ${LIMITS.name} caracteres.`);
-  if (typeof body.public !== 'boolean') throw new RangeError('Informe se o modelo é público (true ou false).');
-  const items = body.items;
-  if (!Array.isArray(items) || !items.length || items.length > LIMITS.items) throw new RangeError(`O modelo precisa ter de 1 a ${LIMITS.items} tarefas.`);
-  return { name, public: body.public, items: items.map((t, n) => validateTask(t, catalog, `Tarefa ${n + 1}`)) };
+  if (!name) throw new RangeError('Informe o nome do rascunho.');
+  if (name.length > LIMITS.name) throw new RangeError(`Nome do rascunho com até ${LIMITS.name} caracteres.`);
+  if (typeof body.public !== 'boolean') throw new RangeError('Informe se o rascunho é público (true ou false).');
+  const list = body.activities;
+  if (!Array.isArray(list) || !list.length || list.length > GROUP_LIMITS.activities) throw new RangeError(`O rascunho precisa ter de 1 a ${GROUP_LIMITS.activities} atividades.`);
+  return { name, public: body.public, activities: list.map((a, n) => validateActivity(a, `Atividade ${n + 1}`)).map(({ action, text }) => ({ action, text })) };
+}
+
+// Uma linha { action, text } do passo Atividades (rascunho ou wizard): ação da lista fixa
+// (src/support/actions.js) e atividade de 10 a 300 caracteres. Devolve também a fase da ação.
+export function validateActivity(a, where) {
+  if (!a || typeof a !== 'object' || Array.isArray(a)) throw new RangeError(`${where}: atividade inválida.`);
+  const phase = typeof a.action === 'string' ? phaseOfAction(a.action) : null;
+  if (!phase) throw new RangeError(`${where}: escolha a ação na lista.`);
+  const text = typeof a.text === 'string' ? a.text.trim().replace(/\s+/g, ' ') : '';
+  if (text.length < GROUP_LIMITS.activityMin || text.length > GROUP_LIMITS.activityMax) {
+    throw new RangeError(`${where}: descreva a atividade executada com ${GROUP_LIMITS.activityMin} a ${GROUP_LIMITS.activityMax} caracteres.`);
+  }
+  return { action: a.action, text, phase };
 }
